@@ -1,0 +1,8 @@
+name = "discount-badge"
+
+uid = "72a1db0b-3aff-0c26-39ac-eef5c6d95e00a53b4df1"
+
+type = "theme"
+
+[build]
+automatically_create_app_block = false

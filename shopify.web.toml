@@ -1,0 +1,9 @@
+name = "React App"
+roles = ["frontend"]
+
+[commands]
+dev = "npm run dev:frontend"
+
+[build]
+command = "npm run build"
+path = "dist"

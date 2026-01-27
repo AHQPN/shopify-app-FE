@@ -1,0 +1,271 @@
+{% comment %}
+  Discount Badge App Block
+  Automatically displays discount percentage from metafield
+  Metafield: custom.discount_percentage
+{% endcomment %}
+
+{% assign discount = product.metafields.custom.discount_percentage %}
+
+{% if discount != blank and discount > 0 %}
+  <div
+    class="discount-badge-wrapper"
+    {{ block.shopify_attributes }}
+    style="margin-bottom: {{ block.settings.margin_bottom }}px;"
+  >
+    <div
+      class="discount-badge"
+      style="
+        background: {{ block.settings.bg_gradient_start }};
+        {% if block.settings.use_gradient %}
+          background: linear-gradient(135deg, {{ block.settings.bg_gradient_start }} 0%, {{ block.settings.bg_gradient_end }} 100%);
+        {% endif %}
+        color: {{ block.settings.text_color }};
+        padding: {{ block.settings.padding_vertical }}px {{ block.settings.padding_horizontal }}px;
+        border-radius: {{ block.settings.border_radius }}px;
+        font-size: {{ block.settings.font_size }}px;
+        font-weight: {{ block.settings.font_weight }};
+      "
+    >
+      {% if block.settings.show_icon %}
+        <span class="discount-badge__icon" style="font-size: {{ block.settings.icon_size }}px;">
+          {{- block.settings.icon_emoji -}}
+        </span>
+      {% endif %}
+      <span class="discount-badge__text">
+        {{- block.settings.text_prefix -}}
+        {{- discount | round: block.settings.decimal_places -}}
+        {{- block.settings.text_suffix -}}
+      </span>
+    </div>
+  </div>
+
+  <style>
+    .discount-badge-wrapper {
+      display: inline-block;
+    }
+
+    .discount-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+      {% if block.settings.enable_animation %}
+        animation: badge-pulse 2s ease-in-out infinite;
+      {% endif %}
+    }
+
+    {% if block.settings.show_icon and block.settings.enable_animation %}
+    .discount-badge__icon {
+      animation: badge-bounce 1s ease-in-out infinite;
+    }
+    {% endif %}
+
+    .discount-badge__text {
+      letter-spacing: 0.5px;
+    }
+
+    {% if block.settings.enable_animation %}
+    @keyframes badge-pulse {
+      0%, 100% {
+        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+      }
+      50% {
+        box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
+      }
+    }
+
+    @keyframes badge-bounce {
+      0%, 100% {
+        transform: translateY(0);
+      }
+      50% {
+        transform: translateY(-3px);
+      }
+    }
+    {% endif %}
+
+    @media (max-width: 749px) {
+      .discount-badge {
+        font-size: {{ block.settings.font_size | minus: 2 }}px;
+        padding: {{ block.settings.padding_vertical | minus: 2 }}px {{ block.settings.padding_horizontal | minus: 4 }}px;
+      }
+      {% if block.settings.show_icon %}
+      .discount-badge__icon {
+        font-size: {{ block.settings.icon_size | minus: 2 }}px;
+      }
+      {% endif %}
+    }
+  </style>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Discount Badge",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["product", "collection", "index", "search"]
+  },
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "✅ Badge tự động hiển thị khi product có metafield `custom.discount_percentage` > 0. Tùy chỉnh màu sắc và hiệu ứng bên dưới."
+    },
+    {
+      "type": "header",
+      "content": "📝 Nội dung"
+    },
+    {
+      "type": "text",
+      "id": "text_prefix",
+      "label": "Text trước số %",
+      "default": "GIẢM "
+    },
+    {
+      "type": "text",
+      "id": "text_suffix",
+      "label": "Text sau số %",
+      "default": "%"
+    },
+    {
+      "type": "range",
+      "id": "decimal_places",
+      "label": "Số chữ số thập phân",
+      "min": 0,
+      "max": 2,
+      "step": 1,
+      "default": 2
+    },
+    {
+      "type": "header",
+      "content": "🎨 Màu sắc"
+    },
+    {
+      "type": "checkbox",
+      "id": "use_gradient",
+      "label": "Sử dụng gradient",
+      "default": true
+    },
+    {
+      "type": "color",
+      "id": "bg_gradient_start",
+      "label": "Màu nền (hoặc gradient bắt đầu)",
+      "default": "#ff6b6b"
+    },
+    {
+      "type": "color",
+      "id": "bg_gradient_end",
+      "label": "Màu gradient kết thúc",
+      "default": "#ee5a6f"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Màu chữ",
+      "default": "#ffffff"
+    },
+    {
+      "type": "header",
+      "content": "📐 Kích thước"
+    },
+    {
+      "type": "range",
+      "id": "font_size",
+      "label": "Cỡ chữ (px)",
+      "min": 10,
+      "max": 24,
+      "step": 1,
+      "unit": "px",
+      "default": 14
+    },
+    {
+      "type": "select",
+      "id": "font_weight",
+      "label": "Độ đậm chữ",
+      "options": [
+        { "value": "400", "label": "Normal" },
+        { "value": "600", "label": "Semi-bold" },
+        { "value": "700", "label": "Bold" },
+        { "value": "800", "label": "Extra-bold" }
+      ],
+      "default": "700"
+    },
+    {
+      "type": "range",
+      "id": "padding_vertical",
+      "label": "Padding dọc (px)",
+      "min": 4,
+      "max": 20,
+      "step": 2,
+      "unit": "px",
+      "default": 8
+    },
+    {
+      "type": "range",
+      "id": "padding_horizontal",
+      "label": "Padding ngang (px)",
+      "min": 8,
+      "max": 32,
+      "step": 2,
+      "unit": "px",
+      "default": 16
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Bo góc (px)",
+      "min": 0,
+      "max": 50,
+      "step": 2,
+      "unit": "px",
+      "default": 20
+    },
+    {
+      "type": "range",
+      "id": "margin_bottom",
+      "label": "Khoảng cách dưới (px)",
+      "min": 0,
+      "max": 40,
+      "step": 4,
+      "unit": "px",
+      "default": 12
+    },
+    {
+      "type": "header",
+      "content": "🔥 Icon"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_icon",
+      "label": "Hiển thị icon",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "icon_emoji",
+      "label": "Icon emoji",
+      "default": "🔥",
+      "info": "Có thể dùng emoji hoặc text"
+    },
+    {
+      "type": "range",
+      "id": "icon_size",
+      "label": "Cỡ icon (px)",
+      "min": 12,
+      "max": 24,
+      "step": 1,
+      "unit": "px",
+      "default": 16
+    },
+    {
+      "type": "header",
+      "content": "✨ Hiệu ứng"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_animation",
+      "label": "Bật animation (pulse + bounce)",
+      "default": true
+    }
+  ]
+}
+{% endschema %}

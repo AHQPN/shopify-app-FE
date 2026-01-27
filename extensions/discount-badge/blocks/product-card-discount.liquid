@@ -1,0 +1,72 @@
+{% comment %}
+  Product Card Discount Badge
+  Block để hiển thị badge trên product cards (collection, homepage, etc.)
+{% endcomment %}
+
+{% comment %} theme-check-disable UndefinedObject {% endcomment %}
+{% assign product_to_use = product %}
+{% render 'discount-badge', product: product_to_use, inline: true %}
+
+<style>
+  /* Ensure styles are loaded for product cards */
+  .auto-discount-badge-wrapper {
+    margin-bottom: 8px;
+    display: inline-block;
+  }
+
+  .auto-discount-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-weight: 700;
+    font-size: 11px;
+    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+    animation: auto-badge-pulse 2s ease-in-out infinite;
+  }
+
+  .auto-discount-badge__icon {
+    font-size: 13px;
+    animation: auto-badge-bounce 1s ease-in-out infinite;
+  }
+
+  .auto-discount-badge__text {
+    letter-spacing: 0.5px;
+  }
+
+  @keyframes auto-badge-pulse {
+    0%,
+    100% {
+      box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+    }
+    50% {
+      box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
+    }
+  }
+
+  @keyframes auto-badge-bounce {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-2px);
+    }
+  }
+</style>
+
+{% schema %}
+{
+  "name": "Product Card Discount",
+  "target": "section",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Hiển thị discount badge trên product cards trong collection/homepage. Badge tự động ẩn nếu không có discount."
+    }
+  ]
+}
+{% endschema %}

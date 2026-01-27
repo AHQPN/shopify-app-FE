@@ -1,0 +1,6 @@
+# ===== REMOVED - SSR no longer used =====
+# Frontend is now Client-Side Rendered (CSR) SPA
+# Entry point is now: src/main.tsx
+
+# Original file: app/entry.server.tsx
+# Replaced with: Vite + React CSR setup

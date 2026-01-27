@@ -1,0 +1,345 @@
+{% comment %}
+  Auto Discount Badge - App Embed
+  TỰ ĐỘNG inject badge vào MỌI product ở MỌI trang
+  Chỉ cần BẬT App Embed 1 lần trong Theme Customizer
+{% endcomment %}
+
+{% comment %} === PRODUCT DETAIL PAGE === {% endcomment %}
+{% if template.name == 'product' and product %}
+  {% assign discount = product.metafields.custom.discount_percentage %}
+  {% if discount != blank and discount > 0 %}
+    <div class="auto-discount-badge-injected" data-product-id="{{ product.id }}" style="display: none;">{{ discount | round: 2 }}</div>
+  {% endif %}
+{% endif %}
+
+{% comment %} === COLLECTION PAGE - Inject data cho TẤT CẢ products === {% endcomment %}
+{% if template.name == 'collection' and collection %}
+  {% for product in collection.products %}
+    {% assign discount = product.metafields.custom.discount_percentage %}
+    {% if discount != blank and discount > 0 %}
+      <div class="discount-data-{{ product.handle | handleize }}" 
+           data-handle="{{ product.handle }}"
+           data-discount="{{ discount | round: 2 }}"
+           style="display: none;"></div>
+    {% endif %}
+  {% endfor %}
+{% endif %}
+
+{% comment %} === HOMEPAGE & ALL PAGES - Featured/Search/Recommended Products === {% endcomment %}
+{% comment %} Inject data cho products trên MỌI TRANG {% endcomment %}
+{% for product in collections.all.products limit: 50 %}
+  {% assign discount = product.metafields.custom.discount_percentage %}
+  {% if discount != blank and discount > 0 %}
+    <div class="discount-data-{{ product.handle | handleize }}" 
+         data-handle="{{ product.handle }}"
+         data-discount="{{ discount | round: 2 }}"
+         style="display: none;"></div>
+  {% endif %}
+{% endfor %}
+
+<script>
+(function() {
+  'use strict';
+  
+  console.log('🔥 Discount Badge: Global auto-inject script loaded on page:', window.location.pathname);
+  console.log('🔥 Template:', document.body.className);
+  
+  // ==== INJECT VÀO PRODUCT DETAIL PAGE ====
+  function injectToProductDetail() {
+    const discountData = document.querySelector('.auto-discount-badge-injected');
+    if (!discountData) return;
+    
+    const discount = parseFloat(discountData.textContent.trim());
+    if (!discount) return;
+    
+    console.log('🔥 [DETAIL] Injecting badge with discount:', discount + '%');
+    
+    const titleSelectors = [
+      '.product__title',
+      '.product-title',
+      'h1[class*="product"]',
+      '.product__heading',
+      'h1.title',
+      'h1'
+    ];
+    
+    let titleElement = null;
+    for (const selector of titleSelectors) {
+      const elements = document.querySelectorAll(selector);
+      for (const el of elements) {
+        if (el.closest('.product') || el.closest('main') || selector === 'h1') {
+          titleElement = el;
+          break;
+        }
+      }
+      if (titleElement) break;
+    }
+    
+    if (!titleElement) {
+      console.warn('⚠️ [DETAIL] Title not found');
+      return;
+    }
+    
+    if (document.querySelector('.auto-discount-badge-wrapper')) {
+      console.log('ℹ️ [DETAIL] Badge already exists');
+      return;
+    }
+    
+    const badge = document.createElement('div');
+    badge.className = 'auto-discount-badge-wrapper';
+    badge.innerHTML = `
+      <div class="auto-discount-badge">
+        <span class="auto-discount-badge__icon">🔥</span>
+        <span class="auto-discount-badge__text">GIẢM ${discount}%</span>
+      </div>
+    `;
+    
+    titleElement.parentNode.insertBefore(badge, titleElement);
+    console.log('✅ [DETAIL] Badge injected');
+  }
+  
+  // ==== INJECT VÀO COLLECTION/GRID PAGES ====
+  function injectToCollectionCards() {
+    // Lấy discount data từ hidden divs
+    const discountElements = document.querySelectorAll('[class^="discount-data-"]');
+    const discountMap = {};
+    
+    discountElements.forEach(el => {
+      const handle = el.dataset.handle;
+      const discount = parseFloat(el.dataset.discount);
+      if (handle && discount) {
+        discountMap[handle] = discount;
+      }
+    });
+    
+    const productCount = Object.keys(discountMap).length;
+    if (productCount === 0) {
+      console.log('ℹ️ [COLLECTION] No products with discount');
+      return;
+    }
+    
+    console.log('🔥 [COLLECTION] Found', productCount, 'products with discount');
+    console.log('📊 Discount data:', discountMap);
+    
+    // Tìm TẤT CẢ product links
+    const productLinks = document.querySelectorAll('a[href*="/products/"]:not(.auto-discount-processed)');
+    let injectedCount = 0;
+    
+    console.log('🔍 [COLLECTION] Found', productLinks.length, 'product links');
+    
+    productLinks.forEach((link, index) => {
+      // Mark as processed
+      link.classList.add('auto-discount-processed');
+      
+      const match = link.href.match(/\/products\/([^?#\/]+)/);
+      if (!match) {
+        console.log('⚠️ [COLLECTION] Cannot extract handle from:', link.href);
+        return;
+      }
+      
+      const handle = match[1];
+      const discount = discountMap[handle];
+      
+      console.log(`📦 [COLLECTION] Link #${index}:`, handle, 'discount:', discount);
+      
+      if (!discount) return;
+      
+      // Tìm parent container (product card) - thử nhiều cách
+      let card = link.closest('.grid__item');
+      if (!card) card = link.closest('[class*="card"]');
+      if (!card) card = link.closest('li');
+      if (!card) card = link.closest('article');
+      if (!card) card = link.closest('[class*="product"]');
+      if (!card) {
+        // Fallback: lấy parent element
+        let parent = link.parentElement;
+        while (parent && parent !== document.body) {
+          if (parent.querySelector('img') && parent.querySelector('a[href*="/products/"]')) {
+            card = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+      
+      if (!card) {
+        console.warn('⚠️ [COLLECTION] No card container found for:', handle);
+        return;
+      }
+      
+      console.log('✅ [COLLECTION] Card found for:', handle, card);
+      
+      // Skip nếu đã có badge
+      if (card.querySelector('.auto-discount-badge-wrapper')) {
+        console.log('ℹ️ [COLLECTION] Badge already exists for:', handle);
+        return;
+      }
+      
+      // Tìm nơi inject badge
+      let targetElement = null;
+      let insertPosition = 'beforebegin'; // before, after, prepend, append
+      
+      // Strategy 1: Tìm card__content hoặc card__information
+      const cardInfo = card.querySelector('.card__content, .card__information, [class*="card-info"]');
+      if (cardInfo) {
+        targetElement = cardInfo.firstElementChild || cardInfo;
+        insertPosition = 'afterbegin';
+        console.log('📍 [COLLECTION] Using card info for:', handle);
+      }
+      
+      // Strategy 2: Tìm title/heading
+      if (!targetElement) {
+        const titleSelectors = ['.card__heading', 'h3', 'h2', '.product-card__title', '[class*="heading"]'];
+        for (const selector of titleSelectors) {
+          targetElement = card.querySelector(selector);
+          if (targetElement) {
+            insertPosition = 'beforebegin';
+            console.log('📍 [COLLECTION] Using title for:', handle, selector);
+            break;
+          }
+        }
+      }
+      
+      // Strategy 3: Fallback - inject vào đầu card
+      if (!targetElement) {
+        targetElement = card;
+        insertPosition = 'afterbegin';
+        console.log('📍 [COLLECTION] Using card container (fallback) for:', handle);
+      }
+      
+      // Tạo badge
+      const badge = document.createElement('div');
+      badge.className = 'auto-discount-badge-wrapper card-badge';
+      badge.style.cssText = 'margin-bottom: 8px; display: block;';
+      badge.innerHTML = `
+        <div class="auto-discount-badge" style="display: inline-flex;">
+          <span class="auto-discount-badge__icon">🔥</span>
+          <span class="auto-discount-badge__text">GIẢM ${discount}%</span>
+        </div>
+      `;
+      
+      // Insert badge
+      if (insertPosition === 'beforebegin') {
+        targetElement.parentNode.insertBefore(badge, targetElement);
+      } else if (insertPosition === 'afterbegin') {
+        targetElement.insertBefore(badge, targetElement.firstChild);
+      } else if (insertPosition === 'afterend') {
+        targetElement.parentNode.insertBefore(badge, targetElement.nextSibling);
+      }
+      
+      injectedCount++;
+      console.log('✅ [COLLECTION] Badge injected for:', handle, '(' + discount + '%)');
+    });
+    
+    console.log(`✅ [COLLECTION] Total injected: ${injectedCount} badges`);
+  }
+  
+  // ==== RUN INJECTION ====
+  function runInjection() {
+    injectToProductDetail();
+    injectToCollectionCards();
+  }
+  
+  // Run khi DOM ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runInjection);
+  } else {
+    runInjection();
+  }
+  
+  // Re-run khi theme section reload (trong Customizer)
+  document.addEventListener('shopify:section:load', function() {
+    console.log('🔄 Section reloaded, re-injecting badges...');
+    setTimeout(runInjection, 100);
+  });
+  
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Auto Discount Badge",
+  "target": "body",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "🔥 Badge tự động hiển thị trên TẤT CẢ trang có sản phẩm (Product Detail, Collection, Homepage). Hiển thị % giảm giá từ metafield custom.discount_percentage."
+    }
+  ]
+}
+{% endschema %}
+
+<style>
+  /* Badge styles cho TẤT CẢ trang */
+  .auto-discount-badge-wrapper {
+    margin-bottom: 8px;
+    display: inline-block;
+  }
+
+  .auto-discount-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 14px;
+    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+    animation: auto-badge-pulse 2s ease-in-out infinite;
+  }
+
+  .auto-discount-badge__icon {
+    font-size: 16px;
+    animation: auto-badge-bounce 1s ease-in-out infinite;
+  }
+
+  .auto-discount-badge__text {
+    letter-spacing: 0.5px;
+  }
+
+  @keyframes auto-badge-pulse {
+    0%, 100% {
+      box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+    }
+    50% {
+      box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
+    }
+  }
+
+  @keyframes auto-badge-bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-3px);
+    }
+  }
+
+  /* Responsive - smaller on mobile and product cards */
+  @media (max-width: 749px) {
+    .auto-discount-badge {
+      font-size: 11px;
+      padding: 5px 10px;
+    }
+    .auto-discount-badge__icon {
+      font-size: 13px;
+    }
+  }
+  
+  /* Smaller badges on collection/grid */
+  .grid__item .auto-discount-badge,
+  [class*="product-card"] .auto-discount-badge,
+  [class*="product-item"] .auto-discount-badge {
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 16px;
+  }
+  
+  .grid__item .auto-discount-badge__icon,
+  [class*="product-card"] .auto-discount-badge__icon,
+  [class*="product-item"] .auto-discount-badge__icon {
+    font-size: 13px;
+  }
+</style>

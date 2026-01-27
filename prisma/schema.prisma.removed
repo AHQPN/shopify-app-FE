@@ -1,0 +1,6 @@
+# ===== REMOVED - Prisma no longer used =====
+# Database ORM moved to Spring Boot with JPA/Hibernate
+# Session schema will be recreated in Spring Boot application
+
+# Original file: prisma/schema.prisma
+# Functionality moved to: Spring Boot JPA Entities (to be created)

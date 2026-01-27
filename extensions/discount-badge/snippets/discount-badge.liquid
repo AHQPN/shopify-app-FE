@@ -1,0 +1,80 @@
+{% comment %}
+  Discount Badge Snippet
+  Hiển thị discount badge trên bất kỳ product nào
+  
+  Cách dùng: 
+  - Product detail: {% render 'discount-badge', product: product %}
+  - Product card: {% render 'discount-badge', product: card_product, inline: true %}
+{% endcomment %}
+
+{% if product.metafields.custom.discount_percentage != blank %}
+  {% assign discount = product.metafields.custom.discount_percentage | round: 2 %}
+  {% if discount > 0 %}
+    <div class="auto-discount-badge-wrapper" data-discount="{{ discount }}" data-product-id="{{ product.id }}">
+      <div class="auto-discount-badge">
+        <span class="auto-discount-badge__icon">🔥</span>
+        <span class="auto-discount-badge__text">GIẢM {{ discount }}%</span>
+      </div>
+    </div>
+
+    {% unless inline %}
+    <style>
+      .auto-discount-badge-wrapper {
+        margin-bottom: 12px;
+        display: inline-block;
+      }
+
+      .auto-discount-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 14px;
+        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+        animation: auto-badge-pulse 2s ease-in-out infinite;
+      }
+
+      .auto-discount-badge__icon {
+        font-size: 16px;
+        animation: auto-badge-bounce 1s ease-in-out infinite;
+      }
+
+      .auto-discount-badge__text {
+        letter-spacing: 0.5px;
+      }
+
+      @keyframes auto-badge-pulse {
+        0%, 100% {
+          box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+        }
+        50% {
+          box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
+        }
+      }
+
+      @keyframes auto-badge-bounce {
+        0%, 100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-3px);
+        }
+      }
+
+      @media (max-width: 749px) {
+        .auto-discount-badge {
+          font-size: 12px;
+          padding: 6px 12px;
+        }
+        .auto-discount-badge__icon {
+          font-size: 14px;
+        }
+      }
+    </style>
+    {% endunless %}
+  {% endif %}
+{% endif %}

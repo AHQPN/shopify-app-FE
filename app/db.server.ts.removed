@@ -1,0 +1,6 @@
+# ===== REMOVED - Node.js backend no longer used =====
+# Database connection moved to Spring Boot with Spring Data JPA
+# Session management handled by Spring Boot backend
+
+# Original file: app/db.server.ts
+# Functionality moved to: Spring Boot application (to be created)

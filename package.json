@@ -1,0 +1,39 @@
+{
+  "name": "my-app",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "dev:frontend": "vite",
+    "dev:shopify": "shopify app dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+    "typecheck": "tsc --noEmit",
+    "shopify": "shopify"
+  },
+  "type": "module",
+  "dependencies": {
+    "@shopify/app-bridge-react": "^4.2.4",
+    "@shopify/cli": "^3.89.0",
+    "@shopify/polaris": "^12.0.0",
+    "axios": "^1.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.8",
+    "@types/react": "^18.3.25",
+    "@types/react-dom": "^18.3.7",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.6"
+  },
+  "author": "buido"
+}
