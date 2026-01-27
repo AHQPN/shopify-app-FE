@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "typecheck": "tsc --noEmit",
-    "shopify": "shopify"
+    "shopify": "shopify",
+    "sync-url": "node scripts/update-extension.js"
   },
   "type": "module",
   "dependencies": {

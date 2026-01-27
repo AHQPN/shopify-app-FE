@@ -14,6 +14,9 @@ import {
     Select,
     Filters,
     Badge,
+    Modal,
+    Button,
+    ButtonGroup,
 } from "@shopify/polaris";
 import { StarFilledIcon } from "@shopify/polaris-icons";
 import apiClient from "../services/api";
@@ -28,10 +31,13 @@ interface Review {
     id: number;
     shop: string;
     productId: string;
+    productName: string;
     customerName: string;
     rating: number;
     comment: string;
     media: ReviewMedia[];
+    status: boolean;
+    hideReason: string | null;
     createdAt: string;
 }
 
@@ -52,27 +58,26 @@ export default function ReviewsPage() {
     const [page, setPage] = useState(0);
     const [totalPages, setTotalPages] = useState(0);
     const [ratingFilter, setRatingFilter] = useState<string>("");
+    const [productFilter, setProductFilter] = useState<string>("");
+    const [products, setProducts] = useState<{ label: string, value: string }[]>([]);
+    const [hideReasons, setHideReasons] = useState<{ label: string, value: string }[]>([]);
+    const [isHideModalOpen, setIsHideModalOpen] = useState(false);
+    const [selectedHideReason, setSelectedHideReason] = useState<string>("");
+    const [currentReview, setCurrentReview] = useState<Review | null>(null);
+    const [updating, setUpdating] = useState<number | null>(null);
 
-    const fetchReviews = useCallback(async (pageIndex = 0, ratingVal = "") => {
+    const fetchReviews = useCallback(async (pageIndex = 0, ratingVal = "", productVal = "") => {
         setLoading(true);
         try {
             const params: any = { page: pageIndex, size: 10 };
             if (ratingVal) params.rating = parseInt(ratingVal);
+            if (productVal) params.productId = productVal;
 
             const response = await apiClient.get(`/reviews`, { params });
-            console.log("Raw API Response (Reviews):", response);
-
-            // Interceptor unwraps 'data' if code===1000, so response.data IS the Page object
             const payload = response.data;
-
             if (payload && payload.content) {
-                console.log("Reviews fetched:", payload.content);
                 setReviews(payload.content);
                 setTotalPages(payload.totalPages);
-            } else if (payload && payload.data && payload.data.content) {
-                // Fallback in case interceptor didn't unwrap
-                setReviews(payload.data.content);
-                setTotalPages(payload.data.totalPages);
             }
         } catch (error) {
             console.error("Failed to fetch reviews", error);
@@ -81,20 +86,35 @@ export default function ReviewsPage() {
         }
     }, []);
 
+    const fetchProducts = async () => {
+        try {
+            const res = await apiClient.get("/products");
+            if (res.data) {
+                const options = res.data.map((p: any) => ({ label: p.title, value: p.id }));
+                setProducts([{ label: 'Tất cả sản phẩm', value: '' }, ...options]);
+            }
+        } catch (e) {
+            console.error("Failed to fetch products", e);
+        }
+    };
+
+    const fetchHideReasons = async () => {
+        try {
+            const res = await apiClient.get("/reviews/hide-reasons");
+            if (res.data) {
+                setHideReasons(res.data);
+            }
+        } catch (e) {
+            console.error("Failed to fetch hide reasons", e);
+        }
+    };
+
     const fetchStats = async () => {
         try {
-            console.log("Fetching review stats...");
             const res = await apiClient.get("/reviews/stats");
-            console.log("Raw API Response (Stats):", res);
-
-            // Interceptor unwraps 'data', so res.data IS 'ReviewStats' object
             const payload = res.data;
-
             if (payload && typeof payload.totalReviews === 'number') {
                 setStats(payload);
-            } else if (payload && payload.data) {
-                // Fallback
-                setStats(payload.data);
             }
         } catch (e) {
             console.error("Failed to fetch stats", e);
@@ -102,63 +122,147 @@ export default function ReviewsPage() {
     };
 
     useEffect(() => {
-        fetchReviews(page, ratingFilter);
-    }, [page, ratingFilter, fetchReviews]);
+        fetchReviews(page, ratingFilter, productFilter);
+    }, [page, ratingFilter, productFilter, fetchReviews]);
 
     useEffect(() => {
         fetchStats();
+        fetchProducts();
+        fetchHideReasons();
     }, []);
+
+    const handleRatingChange = (value: string) => {
+        setRatingFilter(value);
+        setPage(0);
+    };
+
+    const handleProductChange = (value: string) => {
+        setProductFilter(value);
+        setPage(0);
+    };
+
+    const handleToggleStatus = async (review: Review) => {
+        if (review.status) {
+            // If currently published -> Hide
+            setCurrentReview(review);
+            setSelectedHideReason(hideReasons[0]?.value || "");
+            setIsHideModalOpen(true);
+        } else {
+            // If currently hidden -> Publish
+            await updateReviewStatus(review.id, true, undefined);
+        }
+    };
+
+    const updateReviewStatus = async (id: number, status: boolean, hideReason?: string) => {
+        setUpdating(id);
+        try {
+            await apiClient.put("/reviews", {
+                id,
+                status,
+                hideReason
+            });
+            // Refresh data
+            fetchReviews(page, ratingFilter, productFilter);
+            fetchStats();
+        } catch (e) {
+            console.error("Failed to update status", e);
+        } finally {
+            setUpdating(null);
+        }
+    };
+
+    const handleHideConfirm = async () => {
+        if (currentReview) {
+            await updateReviewStatus(currentReview.id, false, selectedHideReason);
+            setIsHideModalOpen(false);
+            setCurrentReview(null);
+        }
+    };
 
     const resourceName = { singular: "review", plural: "reviews" };
     const { selectedResources, allResourcesSelected, handleSelectionChange } =
         useIndexResourceState(reviews as unknown as { [key: string]: unknown; id: string }[]);
 
-    const handleRatingChange = (value: string) => {
-        setRatingFilter(value);
-        setPage(0); // Reset to first page
-    };
-
     const rowMarkup = reviews.map(
-        ({ id, customerName, rating, comment, createdAt, productId, media }, index) => (
-            <IndexTable.Row
-                id={id.toString()}
-                key={id}
-                selected={selectedResources.includes(id.toString())}
-                position={index}
-            >
-                <IndexTable.Cell>
-                    <Text variant="bodyMd" fontWeight="bold" as="span">{customerName || 'Anonymous'}</Text>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ color: '#fbbf24', display: 'flex' }}>{[...Array(rating)].map((_, i) => <Icon key={i} source={StarFilledIcon} tone="warning" />)}</span>
-                        <Text variant="bodySm" as="span">({rating})</Text>
-                    </div>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    <div style={{ maxWidth: '300px', whiteSpace: 'normal' }}>{comment}</div>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    {media && media.length > 0 ? (
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                            {media.slice(0, 3).map(m => (
-                                <Thumbnail
-                                    key={m.id}
-                                    source={m.mediaType === "IMAGE" ? m.mediaUrl : ""}
-                                    alt="media"
-                                    size="small"
-                                />
-                            ))}
+        ({ id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason }, index) => {
+            const displayRating = rating || 0;
+            return (
+                <IndexTable.Row
+                    id={id.toString()}
+                    key={id}
+                    selected={selectedResources.includes(id.toString())}
+                    position={index}
+                >
+                    <IndexTable.Cell>
+                        <Text variant="bodyMd" fontWeight="bold" as="span">{customerName || 'Anonymous'}</Text>
+                    </IndexTable.Cell>
+                    
+                    <IndexTable.Cell>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {/* Rating */}
+                            {displayRating > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span style={{ color: '#fbbf24', display: 'flex' }}>
+                                        {[...Array(displayRating)].map((_, i) => (
+                                            <Icon key={i} source={StarFilledIcon} tone="warning" />
+                                        ))}
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Comment */}
+                            <div style={{ whiteSpace: 'normal' }}>{comment}</div>
+
+                            {/* Media */}
+                            {media && media.length > 0 && (
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                    {media.slice(0, 3).map(m => (
+                                        <Thumbnail
+                                            key={m.id}
+                                            source={m.mediaType === "IMAGE" ? m.mediaUrl : ""}
+                                            alt="media"
+                                            size="small"
+                                        />
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Product Name */}
+                            <Text variant="bodySm" tone="subdued" as="span">Product: {productName || 'Unknown Product'}</Text>
                         </div>
-                    ) : "-"}
-                </IndexTable.Cell>
-                <IndexTable.Cell>{productId.replace('gid://shopify/Product/', '')}</IndexTable.Cell>
-                <IndexTable.Cell>
-                    {new Date(createdAt).toLocaleDateString()}
-                </IndexTable.Cell>
-            </IndexTable.Row>
-        )
+                    </IndexTable.Cell>
+
+                    <IndexTable.Cell>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Badge tone={status ? 'success' : 'critical'}>
+                                    {status ? 'Published' : 'Hidden'}
+                                </Badge>
+                                <Button
+                                    size="micro"
+                                    onClick={() => handleToggleStatus({ id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason } as Review)}
+                                    loading={updating === id}
+                                >
+                                    {status ? "Hide" : "Publish"}
+                                </Button>
+                            </div>
+                            {!status && hideReason && (
+                                <Text variant="bodySm" tone="critical" as="p">
+                                    Reason: {hideReason}
+                                </Text>
+                            )}
+                        </div>
+                    </IndexTable.Cell>
+
+                    <IndexTable.Cell>
+                        {new Date(createdAt).toLocaleDateString()}
+                    </IndexTable.Cell>
+                </IndexTable.Row>
+            );
+        }
     );
+
+
 
     const filters = [
         {
@@ -200,21 +304,23 @@ export default function ReviewsPage() {
                             <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
                                 <LegacyCard sectioned>
                                     <Text variant="headingSm" as="h6">Average Rating</Text>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                         <Text variant="heading2xl" as="p">{stats.averageRating}</Text>
-                                        <Icon source={StarFilledIcon} tone="warning" />
+                                        <div style={{ transform: 'scale(2)', transformOrigin: 'left center' }}>
+                                            <Icon source={StarFilledIcon} tone="warning" />
+                                        </div>
                                     </div>
                                 </LegacyCard>
                             </Grid.Cell>
-                            <Grid.Cell columnSpan={{ xs: 12, sm: 6, md: 6, lg: 6, xl: 6 }}>
+                            <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
                                 <LegacyCard sectioned>
                                     <Text variant="headingSm" as="h6">Breakdown</Text>
                                     <div style={{ display: 'flex', gap: '12px', marginTop: '8px', fontSize: '13px' }}>
-                                        <Badge tone="success">5★: {stats.fiveStars}</Badge>
-                                        <Badge tone="info">4★: {stats.fourStars}</Badge>
-                                        <Badge>3★: {stats.threeStars}</Badge>
-                                        <Badge tone="attention">2★: {stats.twoStars}</Badge>
-                                        <Badge tone="critical">1★: {stats.oneStar}</Badge>
+                                        <Badge tone="success">{`5★: ${stats.fiveStars}`}</Badge>
+                                        <Badge tone="info">{`4★: ${stats.fourStars}`}</Badge>
+                                        <Badge>{`3★: ${stats.threeStars}`}</Badge>
+                                        <Badge tone="attention">{`2★: ${stats.twoStars}`}</Badge>
+                                        <Badge tone="critical">{`1★: ${stats.oneStar}`}</Badge>
                                     </div>
                                 </LegacyCard>
                             </Grid.Cell>
@@ -224,20 +330,30 @@ export default function ReviewsPage() {
 
                 <Layout.Section>
                     <Card padding="0">
-                        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e1e3e5' }}>
-                            <Select
-                                label="Filter by Rating"
-                                options={[
-                                    { label: 'All Ratings', value: '' },
-                                    { label: '5 Stars', value: '5' },
-                                    { label: '4 Stars', value: '4' },
-                                    { label: '3 Stars', value: '3' },
-                                    { label: '2 Stars', value: '2' },
-                                    { label: '1 Star', value: '1' },
-                                ]}
-                                value={ratingFilter}
-                                onChange={handleRatingChange}
-                            />
+                        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e1e3e5', display: 'flex', gap: '16px' }}>
+                            <div style={{ flex: 1 }}>
+                                <Select
+                                    label="Filter by Product"
+                                    options={products}
+                                    value={productFilter}
+                                    onChange={handleProductChange}
+                                />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <Select
+                                    label="Filter by Rating"
+                                    options={[
+                                        { label: 'All Ratings', value: '' },
+                                        { label: '5 Stars', value: '5' },
+                                        { label: '4 Stars', value: '4' },
+                                        { label: '3 Stars', value: '3' },
+                                        { label: '2 Stars', value: '2' },
+                                        { label: '1 Star', value: '1' },
+                                    ]}
+                                    value={ratingFilter}
+                                    onChange={handleRatingChange}
+                                />
+                            </div>
                         </div>
 
                         <IndexTable
@@ -247,13 +363,18 @@ export default function ReviewsPage() {
                             onSelectionChange={handleSelectionChange}
                             headings={[
                                 { title: "Customer" },
-                                { title: "Rating" },
-                                { title: "Comment" },
-                                { title: "Media" },
-                                { title: "Product ID" },
+                                { title: "Review Details" },
+                                { title: "Status" },
                                 { title: "Date" },
                             ]}
                             loading={loading}
+                            emptyState={
+                                <div style={{ padding: '40px', textAlign: 'center' }}>
+                                    <Text as="p" variant="bodyMd" tone="subdued">
+                                        Chưa có review nào. Reviews sẽ xuất hiện ở đây khi khách hàng đánh giá sản phẩm.
+                                    </Text>
+                                </div>
+                            }
                         >
                             {rowMarkup}
                         </IndexTable>
@@ -268,6 +389,32 @@ export default function ReviewsPage() {
                     </Card>
                 </Layout.Section>
             </Layout>
+
+            <Modal
+                open={isHideModalOpen}
+                onClose={() => setIsHideModalOpen(false)}
+                title="Reason for hiding review"
+                primaryAction={{
+                    content: 'Hide Review',
+                    onAction: handleHideConfirm,
+                    loading: updating === currentReview?.id
+                }}
+                secondaryActions={[
+                    {
+                        content: 'Cancel',
+                        onAction: () => setIsHideModalOpen(false),
+                    },
+                ]}
+            >
+                <Modal.Section>
+                    <Select
+                        label="Select a reason"
+                        options={hideReasons}
+                        value={selectedHideReason}
+                        onChange={(val: string) => setSelectedHideReason(val)}
+                    />
+                </Modal.Section>
+            </Modal>
         </Page>
     );
 }
