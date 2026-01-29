@@ -9,7 +9,7 @@
     
     // Using Ngrok URL from .env (Manual update or assume build process replaces this if set up)
     // For Production: Consider using a Schema Setting.
-    const API_URL = 'https://19accc61e9c3.ngrok-free.app/api'; 
+    const API_URL = 'https://f793237380ac.ngrok-free.app/api'; 
 
     let replyingToId = null;
     

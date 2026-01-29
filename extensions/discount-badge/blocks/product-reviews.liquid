@@ -237,29 +237,6 @@
     border-color: #d1d5db;
   }
 
-  .reply-banner {
-    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-    color: #1e40af;
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 14px;
-    border: 1px solid #bfdbfe;
-  }
-
-  .cancel-reply-btn {
-    background: none;
-    border: none;
-    color: #1e40af;
-    font-weight: 700;
-    cursor: pointer;
-    font-size: 18px;
-    padding: 0 8px;
-  }
-
   @media (max-width: 640px) {
     .review-modal-content {
       max-height: 100vh;
@@ -351,8 +328,6 @@
       </div>
 
       <div class="review-modal-body">
-        <div id="reply-banner-container"></div>
-
         <form id="review-form">
           <div class="form-group">
             <label class="form-label">
@@ -424,6 +399,11 @@
             </div>
           </div>
 
+          <div class="form-group" style="margin-top: 16px; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" name="isAnonymous" id="is-anonymous-checkbox" style="width: 18px; height: 18px; cursor: pointer;">
+            <label for="is-anonymous-checkbox" style="font-size: 14px; color: #374151; cursor: pointer;">Post as Anonymous</label>
+          </div>
+
           <div style="display: flex; gap: 12px; margin-top: 24px;">
             <button type="submit" class="btn-primary" style="flex: 1;">
               <i class="fa-solid fa-paper-plane" style="margin-right: 6px;"></i>
@@ -442,6 +422,22 @@
   </div>
 {% endif %}
 
+<!-- Thank You Modal -->
+<div id="thank-you-modal" class="review-modal">
+  <div class="review-modal-content" style="max-width: 400px; text-align: center; padding: 40px 24px;">
+    <div style="width: 80px; height: 80px; background: #f0fdf4; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; color: #10b981; font-size: 40px;">
+      <i class="fa-solid fa-circle-check"></i>
+    </div>
+    <h3 style="margin: 0 0 12px 0; font-size: 24px; font-weight: 700; color: #111827;">Thank You!</h3>
+    <p style="margin: 0 0 32px 0; color: #4b5563; line-height: 1.6; font-size: 15px;">
+      Your review has been submitted successfully. It will be reviewed by our team and published shortly.
+    </p>
+    <button id="btn-close-thanks" class="btn-primary" style="width: 100%;">
+      Close
+    </button>
+  </div>
+</div>
+
 <script>
   (function () {
     const container = document.getElementById('app-product-reviews');
@@ -452,9 +448,7 @@
     const shop = container.dataset.shop;
     
     // Using Ngrok URL from .env (Manual update or assume build process replaces this if set up)
-    const API_URL = 'https://19accc61e9c3.ngrok-free.app/api'; 
-
-    let replyingToId = null;
+    const API_URL = 'https://dc3019c28747.ngrok-free.app/api'; 
 
     // Helper to fetch with Ngrok skip header
     async function fetchApi(endpoint, options = {}) {
@@ -483,6 +477,8 @@
     const statusDiv = document.getElementById('review-submit-status');
     const fileInput = document.getElementById('file-upload');
     const fileLabel = document.getElementById('file-upload-label');
+    const thankYouModal = document.getElementById('thank-you-modal');
+    const btnCloseThanks = document.getElementById('btn-close-thanks');
 
     function openModal() {
       if (modal) {
@@ -496,9 +492,22 @@
         modal.classList.remove('active');
         document.body.style.overflow = '';
         if (form) form.reset();
-        cancelReply();
         if (statusDiv) statusDiv.innerHTML = '';
         updateFileLabel();
+      }
+    }
+
+    function openThanks() {
+      if (thankYouModal) {
+        thankYouModal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    function closeThanks() {
+      if (thankYouModal) {
+        thankYouModal.classList.remove('active');
+        document.body.style.overflow = '';
       }
     }
 
@@ -511,6 +520,14 @@
         if (e.target === modal) closeModal();
       });
     }
+
+    if (thankYouModal) {
+      thankYouModal.addEventListener('click', (e) => {
+        if (e.target === thankYouModal) closeThanks();
+      });
+    }
+
+    if (btnCloseThanks) btnCloseThanks.addEventListener('click', closeThanks);
 
     // File upload handling
     function updateFileLabel() {
@@ -533,7 +550,7 @@
       if (!statsContainer) return;
 
       try {
-        const res = await fetchApi(`/reviews/stats?shop=${shop}&productId=${productId}`);
+        const res = await fetchApi(`/reviews/stats?shop=${shop}&productId=${productId}&status=true`);
         if (!res.ok) throw new Error('Failed to load stats');
         const json = await res.json();
         const stats = json.data;
@@ -579,7 +596,7 @@
       loadStats();
 
       try {
-        const res = await fetchApi(`/reviews?shop=${shop}&productId=${productId}`);
+        const res = await fetchApi(`/reviews?shop=${shop}&productId=${productId}&status=true`);
         if (!res.ok) throw new Error('Failed to load');
         const json = await res.json();
         const allReviews = json.data.content;
@@ -594,78 +611,61 @@
           return;
         }
 
-        const parents = allReviews.filter((r) => !r.replyTo);
-        const replies = allReviews.filter((r) => r.replyTo);
-
-        const renderReview = (r, isReply = false) => {
+        const renderReview = (r) => {
+          const isAnonymous = r.isAnonymous === true;
+          const displayName = isAnonymous ? 'Anonymous' : (r.customerName || 'Customer');
+          const isPinned = r.isPinned === true;
           const stars = Array(5).fill(0).map((_, i) =>
             `<i class="fa-solid fa-star" style="color: ${i < r.rating ? '#fbbf24' : '#e5e7eb'}; font-size: 14px;"></i>`
           ).join('');
 
           return `
-            <div style="${isReply ? 'margin-left: 48px; border-left: 3px solid #dbeafe; padding-left: 16px; background: #f0f9ff;' : 'border-bottom: 1px solid #f3f4f6; padding-bottom: 20px;'} margin-bottom: 20px; padding: 16px; border-radius: 8px;">
-              <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 12px;">
-                 <div style="display:flex; align-items:center; gap: 12px;">
-                    <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 16px; box-shadow: 0 4px 6px -1px rgba(102, 126, 234, 0.3);">
-                        ${(r.customerName || 'A').charAt(0).toUpperCase()}
+             <div style="border-bottom: 1px solid #f3f4f6; padding-bottom: 20px; margin-bottom: 20px;">
+               <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 12px;">
+                  <div style="display:flex; align-items:center; gap: 12px;">
+                     <div style="width: 40px; height: 40px; background: ${isAnonymous ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                         ${displayName.charAt(0).toUpperCase()}
+                     </div>
+                     <div>
+                         <strong style="color: #111827; font-size: 15px; display:block; display: flex; align-items: center; gap: 8px;">
+                            ${displayName}
+                         </strong>
+                         <small style="color: #9ca3af; font-size: 12px;">${new Date(r.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</small>
+                     </div>
+                  </div>
+                  <div style="display: flex; gap: 4px;">${r.rating ? stars : ''}</div>
+               </div>
+               <p style="margin: 0 0 12px 0; color: #374151; line-height: 1.6; font-size: 15px;">${r.comment}</p>
+               ${r.media && r.media.length ? `
+                  <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom: 8px; margin-top: 12px;">
+                    ${r.media.map((m) => m.mediaType === 'IMAGE' ? 
+                      `<img src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; width: 100px; object-fit: cover; border-radius: 12px; border: 2px solid #e5e7eb; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" />` : 
+                      `<video src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; border-radius: 12px;" controls></video>`
+                    ).join('')}
+                  </div>` : ''}
+               
+               ${r.reply ? `
+                  <div style="margin-top: 16px; padding: 16px; background: #e0f7f9; border-radius: 12px; position: relative;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: #086c7e;">
+                      <i class="fa-solid fa-reply" style="font-size: 14px; transform: scaleX(-1);"></i>
+                      <strong style="font-size: 13px; font-weight: 600;">Shop reply</strong>
                     </div>
-                    <div>
-                        <strong style="color: #111827; font-size: 15px; display:block;">${r.customerName || 'Anonymous'}</strong>
-                        <small style="color: #9ca3af; font-size: 12px;">${new Date(r.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</small>
+                    <p style="margin: 0; font-size: 14px; color: #374151; line-height: 1.5; padding-left: 24px;">${r.reply}</p>
+                    <div style="position: absolute; top: 12px; right: 16px; color: #9ca3af; cursor: pointer;">
+                      <i class="fa-solid fa-ellipsis"></i>
                     </div>
-                    ${isReply ? '<span style="font-size: 11px; color: #2563eb; background: #dbeafe; padding: 3px 8px; border-radius: 4px; font-weight: 600; margin-left: 8px;">REPLY</span>' : ''}
-                 </div>
-                 <div style="display: flex; gap: 4px;">${!isReply && r.rating ? stars : ''}</div>
-              </div>
-              <p style="margin: 0 0 12px 0; color: #374151; line-height: 1.6; font-size: 15px;">${r.comment}</p>
-              ${r.media && r.media.length ? `
-                 <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom: 8px; margin-top: 12px;">
-                   ${r.media.map((m) => m.mediaType === 'IMAGE' ? 
-                     `<img src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; width: 100px; object-fit: cover; border-radius: 12px; border: 2px solid #e5e7eb; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" />` : 
-                     `<video src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; border-radius: 12px;" controls></video>`
-                   ).join('')}
-                 </div>` : ''}
-              ${!isReply && modal ? `<div style="margin-top: 12px;"><button class="btn-reply" data-id="${r.id}" data-name="${r.customerName || 'Anonymous'}" style="background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 12px; border-radius: 6px; transition: all 0.2s;"><i class="fa-solid fa-reply"></i> Reply</button></div>` : ''}
-            </div>`;
+                  </div>` : ''}
+             </div>`;
         };
 
-        const html = parents.map((p) => {
-            const pReplies = replies.filter((r) => r.replyTo === p.id);
-            pReplies.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-            return renderReview(p) + pReplies.map((r) => renderReview(r, true)).join('');
-          }).join('');
-
+        const html = allReviews.map((r) => renderReview(r)).join('');
         listContainer.innerHTML = html;
-        listContainer.querySelectorAll('.btn-reply').forEach((btn) => {
-          btn.addEventListener('click', (e) => startReply(btn.dataset.id, btn.dataset.name));
-        });
       } catch (e) {
         console.error(e);
         listContainer.innerHTML = '<p style="color:#ef4444; text-align: center; padding: 20px;">Error loading reviews.</p>';
       }
     }
 
-    // Reply Logic
-    function startReply(id, name) {
-      replyingToId = id;
-      openModal();
-      const ratingGroup = form.querySelector('.star-rating-input').closest('.form-group');
-      if (ratingGroup) ratingGroup.style.display = 'none';
-
-      const bannerContainer = document.getElementById('reply-banner-container');
-      if (bannerContainer) {
-        bannerContainer.innerHTML = `<div class="reply-banner"><span><i class="fa-solid fa-reply" style="margin-right: 6px;"></i>Replying to <strong>${name}</strong></span><button type="button" class="cancel-reply-btn" id="btn-cancel-reply-banner">×</button></div>`;
-        document.getElementById('btn-cancel-reply-banner').onclick = cancelReply;
-      }
-    }
-
-    function cancelReply() {
-      replyingToId = null;
-      const ratingGroup = form.querySelector('.star-rating-input').closest('.form-group');
-      if (ratingGroup) ratingGroup.style.display = 'block';
-      const bannerContainer = document.getElementById('reply-banner-container');
-      if (bannerContainer) bannerContainer.innerHTML = '';
-    }
 
     // Form Submit
     if (form) {
@@ -678,7 +678,6 @@
 
         const ratingInput = form.querySelector('input[name="rating"]:checked');
         let ratingVal = ratingInput ? parseInt(ratingInput.value) : 5;
-        if (replyingToId) ratingVal = null;
 
         try {
           const mediaItems = [];
@@ -707,15 +706,16 @@
             uploadJson.data.forEach((url) => mediaItems.push({ url: url, type: 'IMAGE', fileSize: 0 }));
           }
 
-          const reviewPayload = {
-            productId: productId,
-            productName: productName,
-            customerName: formData.get('customerName'),
-            rating: ratingVal,
-            comment: formData.get('comment'),
-            replyTo: replyingToId,
-            media: mediaItems,
-          };
+            const isAnon = formData.get('isAnonymous') === 'on';
+            const reviewPayload = {
+              productId: productId,
+              productName: productName,
+              customerName: formData.get('customerName'),
+              rating: ratingVal,
+              comment: formData.get('comment'),
+              isAnonymous: isAnon,
+              media: mediaItems,
+            };
 
           const res = await fetchApi(`/reviews?shop=${shop}`, {
             method: 'POST',
@@ -728,9 +728,9 @@
           if (statusDiv) statusDiv.innerHTML = '<span style="color: #10b981;"><i class="fa-solid fa-circle-check"></i> Review submitted successfully!</span>';
           setTimeout(() => {
             closeModal();
-            loadReviews();
+            openThanks();
             if (submitBtn) submitBtn.disabled = false;
-          }, 1500);
+          }, 1000);
         } catch (err) {
           console.error(err);
           if (statusDiv) statusDiv.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-exclamation"></i> ${err.message}</span>`;

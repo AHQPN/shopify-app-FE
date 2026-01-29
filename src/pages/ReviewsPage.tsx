@@ -20,7 +20,7 @@ import {
     TextField,
     Checkbox,
 } from "@shopify/polaris";
-import { StarFilledIcon, CheckCircleIcon } from "@shopify/polaris-icons";
+import { PinIcon, CheckCircleIcon, StarFilledIcon } from "@shopify/polaris-icons";
 import apiClient from "../services/api";
 
 interface ReviewMedia {
@@ -41,9 +41,10 @@ interface Review {
     status: string; // Updated to match Enum (PUBLISHED, HIDDEN, ARCHIVED)
     hideReason: string | null;
     createdAt: string;
-    replyNum: number;
-    unreadReplyCount: number;
     isRead: boolean;
+    reply: string | null;
+    isPinned: boolean;
+    isAnonymous: boolean;
 }
 
 interface ReviewStats {
@@ -63,26 +64,48 @@ const ExpandableComment = ({ text, maxLength = 200, isExpanded, onToggle }: {
     isExpanded: boolean;
     onToggle: () => void;
 }) => {
-    if (!text) return <Text tone="subdued" as="span" variant="bodyMd">No comment</Text>;
-    if (text.length <= maxLength) return <Text variant="bodyMd" as="p">{text}</Text>;
+    const commentStyle = { fontSize: '14px', lineHeight: '1.6' };
+    
+    if (!text) return <span style={{ ...commentStyle, color: '#6b7280' }}>No comment</span>;
+    if (text.length <= maxLength) return <div style={commentStyle}>{text}</div>;
 
     return (
-        <div>
-            <Text variant="bodyMd" as="p">
-                {isExpanded ? text : `${text.substring(0, maxLength)}...`}
-                <span style={{ marginLeft: '4px' }}>
-                    <Button
-                        variant="plain"
-                        size="micro"
-                        onClick={onToggle}
-                    >
-                        {isExpanded ? "Show less" : "See more"}
-                    </Button>
-                </span>
-            </Text>
+        <div style={commentStyle}>
+            {isExpanded ? text : `${text.substring(0, maxLength)}...`}
+            <span style={{ marginLeft: '4px' }}>
+                <Button
+                    variant="plain"
+                    size="micro"
+                    onClick={onToggle}
+                >
+                    {isExpanded ? "Show less" : "See more"}
+                </Button>
+            </span>
         </div>
     );
+};
 
+const formatRelativeTime = (dateString: string) => {
+    if (!dateString) return "";
+    const now = new Date();
+    const then = new Date(dateString);
+    const diffInSeconds = Math.floor((now.getTime() - then.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return `${diffInSeconds}s ago`;
+    
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    if (diffInMinutes < 60) return `${diffInMinutes} mins ago`;
+    
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    if (diffInHours < 24) return `${diffInHours}h ago`;
+    
+    const diffInDays = Math.floor(diffInHours / 24);
+    if (diffInDays < 30) return `${diffInDays} days ago`;
+    
+    const diffInMonths = Math.floor(diffInDays / 30);
+    if (diffInMonths < 12) return `${diffInMonths} months ago`;
+    
+    return then.toLocaleDateString();
 };
 
 export default function ReviewsPage() {
@@ -102,16 +125,16 @@ export default function ReviewsPage() {
     const [updating, setUpdating] = useState<number | null>(null);
     const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
-    const [isRepliesModalOpen, setIsRepliesModalOpen] = useState(false);
-    const [replies, setReplies] = useState<Review[]>([]);
+    const [isResponseModalOpen, setIsResponseModalOpen] = useState(false);
     const [loadingReplies, setLoadingReplies] = useState(false);
     const [parentForReplies, setParentForReplies] = useState<Review | null>(null);
+    const [adminResponse, setAdminResponse] = useState("");
+    const [savingResponse, setSavingResponse] = useState(false);
+    const [currentReplyId, setCurrentReplyId] = useState<number | null>(null);
 
     // Expansion tracking
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
-    // Reply selection tracking
-    const [selectedReplies, setSelectedReplies] = useState<string[]>([]);
 
     const fetchReviews = useCallback(async (pageIndex = 0, ratingVal = "", productVal = "", statusVal = "", readVal = "") => {
         setLoading(true);
@@ -177,41 +200,36 @@ export default function ReviewsPage() {
         fetchHideReasons();
     }, []);
 
-    const handleMarkAsRead = async (ids: number[]) => {
+    const handleMarkAsRead = async (ids: number[], isRead: boolean = true) => {
         // Optimistic update
         setReviews(prev => prev.map(r => 
-            ids.includes(r.id) ? { ...r, isRead: true } : r
+            ids.includes(r.id) ? { ...r, isRead } : r
         ));
 
         try {
-            await apiClient.put("/reviews/read", ids);
+            await apiClient.put("/reviews/read", ids, {
+                params: { isRead }
+            });
             // No need to fetchReviews here as we updated optimistically, 
             // but we fetch stats to keep them in sync
             fetchStats();
         } catch (e) {
-            console.error("Failed to mark as read", e);
+            console.error("Failed to update read status", e);
             // Rollback if needed (for simplicity, we usually refresh on error)
             fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
         }
     };
 
-    const handleMarkRepliesAsRead = async (ids: number[]) => {
-        // Optimistic update for unread count
-        if (parentForReplies) {
-            setReviews(prev => prev.map(r => 
-                r.id === parentForReplies.id 
-                ? { ...r, unreadReplyCount: Math.max(0, r.unreadReplyCount - ids.length) } 
-                : r
-            ));
-        }
-
-        try {
-            await apiClient.put("/reviews/read-reply", ids);
-            // Refresh stats to keep counts accurate
-            fetchStats();
-        } catch (e) {
-            console.error("Failed to mark replies as read", e);
-            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
+    const handleOpenResponseModal = (review: Review) => {
+        setParentForReplies(review);
+        setIsResponseModalOpen(true);
+        setAdminResponse(review.reply || "");
+        setCurrentReplyId(null); // No longer needed for flattening
+        setExpandedId(null);
+        
+        // If not read, mark it as read when opening to reply
+        if (!review.isRead) {
+            handleMarkAsRead([review.id]);
         }
     };
 
@@ -235,60 +253,39 @@ export default function ReviewsPage() {
         setPage(0);
     };
 
-    const handleViewReplies = async (parentReview: Review, isReadFilter?: boolean) => {
-        console.log("Viewing replies for:", parentReview.id, "Filter isRead:", isReadFilter);
-        setParentForReplies(parentReview);
-        setIsRepliesModalOpen(true);
-        setLoadingReplies(true);
-        setExpandedId(null); // Reset expansion for new list
-        setSelectedReplies([]); // Reset selection for new list
+    const handleSaveResponse = async () => {
+        if (!parentForReplies || !adminResponse.trim()) return;
+        setSavingResponse(true);
         try {
-            const params: any = {};
-            if (isReadFilter !== undefined) {
-                params.isRead = isReadFilter;
-            }
-            
-            const res = await apiClient.get(`/reviews/${parentReview.id}/replies`, {
-                params
+            await apiClient.post(`/reviews?shop=${parentForReplies.shop}`, {
+                productId: parentForReplies.productId,
+                productName: parentForReplies.productName,
+                customerName: "Admin",
+                comment: adminResponse,
+                replyTo: parentForReplies.id,
+                rating: null,
+                media: []
             });
-            console.log("Replies response:", res.data);
-            
-            // Mark parent as read when viewing replies
-            if (!parentReview.isRead) {
-                handleMarkAsRead([parentReview.id]);
-            }
-
-            // apiClient unwraps the response, so res.data is already the array of reviews (List<ProductReview>)
-            const replyData = Array.isArray(res.data) ? res.data : [];
-            setReplies(replyData);
+            setIsResponseModalOpen(false);
+            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
         } catch (e) {
-            console.error("Failed to fetch replies", e);
+            console.error("Failed to save response", e);
         } finally {
-            setLoadingReplies(false);
+            setSavingResponse(false);
         }
     };
 
-    const handleCloseRepliesModal = async () => {
-        const selectedIds = [...selectedReplies];
-        if (selectedIds.length > 0) {
-            const idsNum = selectedIds.map(id => parseInt(id));
-            // Trigger API call but don't await it to close modal immediately
-            handleMarkRepliesAsRead(idsNum);
-        }
-        setIsRepliesModalOpen(false);
-        setSelectedReplies([]);
-    };
-
-    const handleRepliesSelectionChange = (selectionType: any, isSelected: boolean, id?: string) => {
-        if (selectionType === 'all') {
-            // Only allow selecting unread items for "mark as read" purpose
-            setSelectedReplies(isSelected ? replies.filter(r => !r.isRead).map(r => r.id.toString()) : []);
-        } else if (id) {
-            setSelectedReplies(prev => isSelected ? [...prev, id] : prev.filter(i => i !== id));
+    const handleTogglePin = async (review: Review) => {
+        const newPinnedStatus = !review.isPinned;
+        try {
+            await apiClient.put(`/reviews/${review.id}/${newPinnedStatus ? 'pin' : 'unpin'}`);
+            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
+        } catch (e) {
+            console.error("Failed to toggle pin", e);
         }
     };
 
-    const handleToggleStatus = async (review: Review, isFromReplies = false) => {
+    const handleToggleStatus = async (review: Review) => {
         if (review.status === 'PUBLISHED') {
             // If currently published -> Hide
             setCurrentReview(review);
@@ -296,11 +293,11 @@ export default function ReviewsPage() {
             setIsHideModalOpen(true);
         } else {
             // If currently hidden -> Publish
-            await updateReviewStatus(review.id, 'PUBLISHED', undefined, isFromReplies);
+            await updateReviewStatus(review.id, 'PUBLISHED');
         }
     };
 
-    const updateReviewStatus = async (id: number, status: string, hideReason?: string, isFromReplies = false) => {
+    const updateReviewStatus = async (id: number, status: string, hideReason?: string) => {
         setUpdating(id);
         try {
             await apiClient.put("/reviews", {
@@ -308,11 +305,6 @@ export default function ReviewsPage() {
                 status,
                 hideReason
             });
-            
-            if (isFromReplies && parentForReplies) {
-                // Refresh replies list inside modal
-                handleViewReplies(parentForReplies);
-            }
             
             // Refresh main data
             fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
@@ -326,12 +318,7 @@ export default function ReviewsPage() {
 
     const handleHideConfirm = async () => {
         if (currentReview) {
-            const isReply = currentReview.replyNum === undefined; // Check if it's a reply by existence of field or value
-            // Actually, in our Review interface, replyNum exists. But for replies it might be 0 or undefined if backend doesn't send it.
-            // Let's use a more reliable check if we are in replies modal context.
-            const isFromReplies = isRepliesModalOpen && replies.some(r => r.id === currentReview.id);
-
-            await updateReviewStatus(currentReview.id, 'HIDDEN', selectedHideReason, isFromReplies);
+            await updateReviewStatus(currentReview.id, 'HIDDEN', selectedHideReason);
             setIsHideModalOpen(false);
             setCurrentReview(null);
         }
@@ -343,7 +330,7 @@ export default function ReviewsPage() {
 
     const rowMarkup = reviews.map(
         (review, index) => {
-            const { id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason, replyNum, unreadReplyCount, isRead } = review;
+            const { id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason, isRead, isPinned, isAnonymous } = review;
             const displayRating = rating || 0;
             const isPublished = status === 'PUBLISHED';
             const isHidden = status === 'HIDDEN';
@@ -359,24 +346,36 @@ export default function ReviewsPage() {
                     tone={isRead ? "subdued" : undefined}
                 >
                     <IndexTable.Cell>
-                        <div style={{ padding: '12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Text variant="bodyMd" fontWeight={isRead ? "medium" : "bold"} as="span" tone={isRead ? "subdued" : "base"}>
-                                {customerName || 'Anonymous'}
-                            </Text>
-                            {isRead ? (
-                                <Icon source={CheckCircleIcon} tone="success" />
-                            ) : (
-                                <span style={{ width: '8px', height: '8px', backgroundColor: '#008060', borderRadius: '50%', display: 'inline-block' }} title="New/Unread" />
-                            )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '12px 0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Text variant="bodyMd" fontWeight="bold" as="span">
+                                    {customerName || 'Customer'}
+                                </Text>
+                                {isRead ? (
+                                    <Icon source={CheckCircleIcon} tone="success" />
+                                ) : (
+                                    <span style={{ width: '8px', height: '8px', backgroundColor: '#008060', borderRadius: '50%', display: 'inline-block' }} title="New/Unread" />
+                                )}
+                            </div>
+                            
+                            <div style={{ fontSize: '14px', textDecoration: 'underline', color: '#2c6ecb', cursor: 'pointer' }}>
+                                {productName || 'Unknown Product'}
+                            </div>
+                            
+                            <div style={{ marginTop: '4px' }}>
+                                <Button
+                                    icon={PinIcon}
+                                    size="micro"
+                                    variant="tertiary"
+                                    onClick={() => handleTogglePin(review)}
+                                    pressed={isPinned}
+                                />
+                            </div>
                         </div>
-                    </IndexTable.Cell>
-
-                    <IndexTable.Cell>
-                        <Text variant="bodyMd" as="span">{productName || 'Unknown Product'}</Text>
                     </IndexTable.Cell>
                     
                     <IndexTable.Cell>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '150px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '450px', width: '100%', padding: '12px 24px' }}>
                             {/* Rating */}
                             {displayRating > 0 && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -390,8 +389,8 @@ export default function ReviewsPage() {
 
                             {/* Media */}
                             {media && media.length > 0 && (
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                    {media.slice(0, 3).map(m => (
+                                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                    {media.slice(0, 5).map(m => (
                                         <div 
                                             key={m.id} 
                                             onClick={() => setZoomedImage(m.mediaUrl)}
@@ -407,33 +406,58 @@ export default function ReviewsPage() {
                                 </div>
                             )}
 
-                             {/* Reply Counts & Action */}
-                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
-                                <div 
-                                    onClick={() => handleViewReplies(review, undefined)}
-                                    style={{ cursor: 'pointer' }}
-                                >
-                                    <Badge tone="info" size="small">{`${replyNum || 0} Replies`}</Badge>
-                                </div>
-                                {unreadReplyCount > 0 && (
-                                    <div 
-                                        onClick={() => handleViewReplies(review, false)}
-                                        style={{ cursor: 'pointer' }}
-                                    >
-                                        <Badge tone="attention" size="small">{`${unreadReplyCount} Unread`}</Badge>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </IndexTable.Cell>
+                             {/* Reply Button */}
+                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+                                 <Button 
+                                     size="micro" 
+                                     variant="primary"
+                                     onClick={() => handleOpenResponseModal(review)}
+                                 >
+                                     {review.reply ? "Edit reply" : "Reply now"}
+                                 </Button>
+                             </div>
 
-                    <IndexTable.Cell>
-                        <div style={{ whiteSpace: 'normal', minWidth: '300px', maxWidth: '550px', wordBreak: 'break-word' }}>
-                           <ExpandableComment 
-                                text={comment} 
-                                isExpanded={expandedId === `review-${id}`}
-                                onToggle={() => setExpandedId(expandedId === `review-${id}` ? null : `review-${id}`)}
-                           />
+                            {/* Comment */}
+                            <div style={{ 
+                                whiteSpace: 'normal', 
+                                wordBreak: 'break-word', 
+                                marginTop: '4px', 
+                                fontSize: '14px', 
+                                lineHeight: '1.6',
+                                color: '#1f2937'
+                            }}>
+                               <ExpandableComment 
+                                    text={comment} 
+                                    isExpanded={expandedId === `review-${id}`}
+                                    onToggle={() => setExpandedId(expandedId === `review-${id}` ? null : `review-${id}`)}
+                               />
+                            </div>
+
+                            {/* Admin Reply Preview */}
+                            {review.reply && (
+                                <div style={{ 
+                                    marginTop: '8px', 
+                                    padding: '16px', 
+                                    backgroundColor: '#e0f7f9', 
+                                    borderRadius: '12px',
+                                    borderLeft: '5px solid #086c7e',
+                                    width: '100%',
+                                    boxSizing: 'border-box'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: '#086c7e' }}>
+                                        <Text variant="bodyMd" fontWeight="bold" as="span">Store Response</Text>
+                                    </div>
+                                    <div style={{ 
+                                        wordBreak: 'break-word', 
+                                        whiteSpace: 'normal', 
+                                        fontSize: '14px', 
+                                        lineHeight: '1.6', 
+                                        color: '#374151' 
+                                    }}>
+                                        {review.reply}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </IndexTable.Cell>
 
@@ -451,11 +475,30 @@ export default function ReviewsPage() {
                                     {isPublished ? "Hide" : "Publish"}
                                 </Button>
                             </div>
-                            {isHidden && hideReason && (
-                                <Badge tone="warning" size="small">
-                                    {`Reason: ${hideReason}`}
-                                </Badge>
+                            {isHidden && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Badge tone="warning" size="small">
+                                        {hideReason ? `Reason: ${hideReason}` : 'Reason: N/A'}
+                                    </Badge>
+                                    <Button
+                                        variant="plain"
+                                        size="micro"
+                                        onClick={() => {
+                                            setCurrentReview(review);
+                                            setSelectedHideReason(hideReason || hideReasons[0]?.value || "");
+                                            setIsHideModalOpen(true);
+                                        }}
+                                    >
+                                        Edit
+                                    </Button>
+                                </div>
                             )}
+                        </div>
+                    </IndexTable.Cell>
+
+                    <IndexTable.Cell>
+                        <div style={{ width: 'max-content' }}>
+                            {formatRelativeTime(createdAt)}
                         </div>
                     </IndexTable.Cell>
 
@@ -464,15 +507,8 @@ export default function ReviewsPage() {
                             <Checkbox
                                 label=""
                                 checked={isRead}
-                                disabled={isRead}
-                                onChange={() => handleMarkAsRead([id])}
+                                onChange={() => handleMarkAsRead([id], !isRead)}
                             />
-                        </div>
-                    </IndexTable.Cell>
-
-                    <IndexTable.Cell>
-                        <div style={{ width: 'max-content' }}>
-                            {new Date(createdAt).toLocaleDateString()}
                         </div>
                     </IndexTable.Cell>
                 </IndexTable.Row>
@@ -614,10 +650,8 @@ export default function ReviewsPage() {
                             itemCount={reviews.length}
                             selectable={false}
                             headings={[
-                                { title: "Customer" },
-                                { title: "Product" },
-                                { title: "Rating & Media" },
-                                { title: "Comment" },
+                                { title: "Details" },
+                                { title: "Review Content" },
                                 { title: "Status" },
                                 { title: "Date" },
                                 { title: "Read" },
@@ -671,123 +705,41 @@ export default function ReviewsPage() {
                 </Modal.Section>
             </Modal>
 
-            {/* Replies Popup Modal */}
+            {/* Admin Response Modal */}
             <Modal
-                size="large"
-                open={isRepliesModalOpen}
-                onClose={handleCloseRepliesModal}
-                title={`Replies for review by ${parentForReplies?.customerName}`}
-                primaryAction={replies.some(r => !r.isRead) ? {
-                    content: 'Mark all as Read',
-                    onAction: () => {
-                        const allUnreadIds = replies.filter(r => !r.isRead).map(r => r.id.toString());
-                        setSelectedReplies(allUnreadIds);
-                    }
-                } : undefined}
+                open={isResponseModalOpen}
+                onClose={() => setIsResponseModalOpen(false)}
+                title={currentReplyId ? "Edit Admin Response" : "Add Admin Response"}
+                primaryAction={{
+                    content: currentReplyId ? 'Update Response' : 'Send Response',
+                    onAction: handleSaveResponse,
+                    loading: savingResponse
+                }}
                 secondaryActions={[
                     {
-                        content: 'Close',
-                        onAction: handleCloseRepliesModal,
+                        content: 'Cancel',
+                        onAction: () => setIsResponseModalOpen(false),
                     },
                 ]}
             >
                 <Modal.Section>
                     {loadingReplies ? (
-                         <div style={{ textAlign: 'center', padding: '20px' }}><Text as="p">Loading replies...</Text></div>
-                    ) : replies.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '20px' }}><Text as="p">No replies found.</Text></div>
+                        <div style={{ textAlign: 'center', padding: '20px' }}><Text as="p">Loading existing response...</Text></div>
                     ) : (
-                        <IndexTable
-                            resourceName={{ singular: 'reply', plural: 'replies' }}
-                            itemCount={replies.length}
-                            headings={[
-                                { title: 'Customer' },
-                                { title: 'Comment' },
-                                { title: 'Media' },
-                                { title: 'Status & Action' },
-                                { title: 'Date' },
-                                { title: 'Read' }
-                            ]}
-                            selectable={false}
-                        >
-                            {replies.map((reply, index) => {
-                                const isPublished = reply.status === 'PUBLISHED';
-                                const isHidden = reply.status === 'HIDDEN';
-                                return (
-                                    <IndexTable.Row 
-                                        id={reply.id.toString()} 
-                                        key={reply.id} 
-                                        position={index}
-                                    >
-                                        <IndexTable.Cell>
-                                            <Text variant="bodyMd" fontWeight="bold" as="span">{reply.customerName || 'Anonymous'}</Text>
-                                        </IndexTable.Cell>
-                                        <IndexTable.Cell>
-                                            <div style={{ whiteSpace: 'normal', minWidth: '300px', maxWidth: '550px', wordBreak: 'break-word' }}>
-                                               <ExpandableComment 
-                                                   text={reply.comment} 
-                                                   isExpanded={expandedId === `reply-${reply.id}`}
-                                                   onToggle={() => setExpandedId(expandedId === `reply-${reply.id}` ? null : `reply-${reply.id}`)}
-                                               />
-                                            </div>
-                                        </IndexTable.Cell>
-                                        <IndexTable.Cell>
-                                            {reply.media && reply.media.length > 0 && (
-                                                <div style={{ display: 'flex', gap: '4px' }}>
-                                                    {reply.media.map(m => (
-                                                        <div 
-                                                            key={m.id} 
-                                                            onClick={() => setZoomedImage(m.mediaUrl)}
-                                                            style={{ cursor: 'pointer' }}
-                                                        >
-                                                            <Thumbnail
-                                                                source={m.mediaType === "IMAGE" ? m.mediaUrl : ""}
-                                                                alt="media"
-                                                                size="small"
-                                                            />
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </IndexTable.Cell>
-                                         <IndexTable.Cell>
-                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                    <Badge tone={isPublished ? 'success' : 'critical'}>
-                                                        {isPublished ? 'Published' : 'Hidden'}
-                                                    </Badge>
-                                                    <Button
-                                                        size="micro"
-                                                        onClick={() => handleToggleStatus(reply, true)}
-                                                        loading={updating === reply.id}
-                                                    >
-                                                        {isPublished ? "Hide" : "Publish"}
-                                                    </Button>
-                                                </div>
-                                                {isHidden && reply.hideReason && (
-                                                    <Badge tone="warning" size="small">
-                                                        {`Reason: ${reply.hideReason}`}
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                         </IndexTable.Cell>
-                                        <IndexTable.Cell>
-                                            {new Date(reply.createdAt).toLocaleString()}
-                                        </IndexTable.Cell>
-                                        <IndexTable.Cell>
-                                            <div style={{ display: 'flex', justifyContent: 'center' }}>
-                                                <Checkbox
-                                                    label=""
-                                                    checked={reply.isRead || selectedReplies.includes(reply.id.toString())}
-                                                    disabled={reply.isRead}
-                                                    onChange={(val) => handleRepliesSelectionChange('one', val, reply.id.toString())}
-                                                />
-                                            </div>
-                                        </IndexTable.Cell>
-                                    </IndexTable.Row>
-                                );
-                            })}
-                        </IndexTable>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <div style={{ padding: '12px', background: '#f6f6f7', borderRadius: '8px' }}>
+                                <Text variant="bodySm" tone="subdued" as="p">Replying to {parentForReplies?.customerName}:</Text>
+                                <Text variant="bodyMd" as="p">"{parentForReplies?.comment}"</Text>
+                            </div>
+                            <TextField
+                                label="Response Message"
+                                value={adminResponse}
+                                onChange={(val) => setAdminResponse(val)}
+                                multiline={4}
+                                autoComplete="off"
+                                placeholder="Type your response here..."
+                            />
+                        </div>
                     )}
                 </Modal.Section>
             </Modal>
