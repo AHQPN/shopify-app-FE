@@ -11,16 +11,20 @@ if (!fs.existsSync(envPath)) {
 }
 
 const envContent = fs.readFileSync(envPath, 'utf-8');
-// Extract SPRING_API_URL (handling optional quotes or whitespace)
-const match = envContent.match(/^SPRING_API_URL=["']?(.*?)["']?\s*$/m);
-const apiUrl = match ? match[1].trim() : null;
+// Extract SPRING_API_URL and VITE_RECAPTCHA_SITE_KEY
+const apiUrlMatch = envContent.match(/^VITE_SPRING_API_URL=["']?(.*?)["']?\s*$/m) || envContent.match(/^SPRING_API_URL=["']?(.*?)["']?\s*$/m);
+const siteKeyMatch = envContent.match(/^VITE_RECAPTCHA_SITE_KEY=["']?(.*?)["']?\s*$/m);
+
+const apiUrl = apiUrlMatch ? apiUrlMatch[1].trim() : null;
+const siteKey = siteKeyMatch ? siteKeyMatch[1].trim() : '';
 
 if (!apiUrl) {
-    console.error('❌ Could not find SPRING_API_URL in .env');
+    console.error('❌ Could not find VITE_SPRING_API_URL or SPRING_API_URL in .env');
     process.exit(1);
 }
 
 console.log(`Found Backend URL: ${apiUrl}`);
+console.log(`Found reCAPTCHA Site Key: ${siteKey || '(empty)'}`);
 
 // 2. Update Liquid file
 const liquidPath = path.resolve(process.cwd(), 'extensions/discount-badge/blocks/product-reviews.liquid');
@@ -31,18 +35,20 @@ if (!fs.existsSync(liquidPath)) {
 }
 
 let content = fs.readFileSync(liquidPath, 'utf-8');
-const regex = /const API_URL = '.*';/;
 
-if (!regex.test(content)) {
-    console.error('❌ Could not find "const API_URL = ...;" pattern in liquid file.');
-    process.exit(1);
+// Update API_URL
+const apiRegex = /const API_URL = '.*';/;
+let newContent = content.replace(apiRegex, `const API_URL = '${apiUrl}${apiUrl.endsWith('/api') ? '' : '/api'}';`);
+
+// Update RECAPTCHA_SITE_KEY
+const siteKeyRegex = /const RECAPTCHA_SITE_KEY = '.*';/;
+if (siteKeyRegex.test(newContent)) {
+    newContent = newContent.replace(siteKeyRegex, `const RECAPTCHA_SITE_KEY = '${siteKey}';`);
 }
-
-const newContent = content.replace(regex, `const API_URL = '${apiUrl}/api';`);
 
 if (content !== newContent) {
     fs.writeFileSync(liquidPath, newContent);
-    console.log(`✅ Successfully updated API_URL in product-reviews.liquid`);
+    console.log(`✅ Successfully updated product-reviews.liquid`);
 } else {
-    console.log('✨ Theme Extension URL is already up to date.');
+    console.log('✨ Theme Extension is already up to date.');
 }

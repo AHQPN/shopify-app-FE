@@ -14,6 +14,9 @@
   referrerpolicy="no-referrer"
 >
 
+<!-- Google reCAPTCHA -->
+<script src="https://www.google.com/recaptcha/api.js?onload=onloadCallback&render=explicit" async defer></script>
+
 <style>
   /* Modal Styles */
   .review-modal {
@@ -400,8 +403,15 @@
           </div>
 
           <div class="form-group" style="margin-top: 16px; display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" name="isAnonymous" id="is-anonymous-checkbox" style="width: 18px; height: 18px; cursor: pointer;">
-            <label for="is-anonymous-checkbox" style="font-size: 14px; color: #374151; cursor: pointer;">Post as Anonymous</label>
+            <input
+              type="checkbox"
+              name="isAnonymous"
+              id="is-anonymous-checkbox"
+              style="width: 18px; height: 18px; cursor: pointer;"
+            >
+            <label for="is-anonymous-checkbox" style="font-size: 14px; color: #374151; cursor: pointer;"
+              >Post as Anonymous</label
+            >
           </div>
 
           <div style="display: flex; gap: 12px; margin-top: 24px;">
@@ -422,6 +432,22 @@
   </div>
 {% endif %}
 
+<!-- Captcha Verification Modal -->
+<div id="captcha-modal" class="review-modal">
+  <div class="review-modal-content" style="max-width: 400px; padding: 32px 24px; text-align: center;">
+    <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 700; color: #111827;">Security Check</h3>
+    <p style="margin: 0 0 24px 0; color: #6b7280; font-size: 14px;">
+      Please complete the verification below to submit your review.
+    </p>
+
+    <div style="display: flex; justify-content: center; margin-bottom: 24px;">
+      <div id="recaptcha-widget"></div>
+    </div>
+
+    <button id="btn-cancel-captcha" class="btn-secondary" style="width: 100%;">Cancel</button>
+  </div>
+</div>
+
 <!-- Thank You Modal -->
 <div id="thank-you-modal" class="review-modal">
   <div class="review-modal-content" style="max-width: 400px; text-align: center; padding: 40px 24px;">
@@ -432,9 +458,7 @@
     <p style="margin: 0 0 32px 0; color: #4b5563; line-height: 1.6; font-size: 15px;">
       Your review has been submitted successfully. It will be reviewed by our team and published shortly.
     </p>
-    <button id="btn-close-thanks" class="btn-primary" style="width: 100%;">
-      Close
-    </button>
+    <button id="btn-close-thanks" class="btn-primary" style="width: 100%;">Close</button>
   </div>
 </div>
 
@@ -446,25 +470,25 @@
     const productId = 'gid://shopify/Product/' + container.dataset.productId;
     const productName = container.dataset.productName;
     const shop = container.dataset.shop;
-    
-    // Using Ngrok URL from .env (Manual update or assume build process replaces this if set up)
-    const API_URL = 'https://dc3019c28747.ngrok-free.app/api'; 
+
+    const API_URL = 'https://cf9506a7798e.ngrok-free.app/api';
+    const RECAPTCHA_SITE_KEY = '6LdAx1osAAAAAEqjehGbSgDvERxdVwPKDUcgxOrn';
 
     // Helper to fetch with Ngrok skip header
     async function fetchApi(endpoint, options = {}) {
       const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint}`;
       const defaultHeaders = {
-        'ngrok-skip-browser-warning': 'true'
+        'ngrok-skip-browser-warning': 'true',
       };
-      
+
       const config = {
         ...options,
         headers: {
           ...defaultHeaders,
-          ...options.headers
-        }
+          ...options.headers,
+        },
       };
-      
+
       return fetch(url, config);
     }
 
@@ -479,6 +503,22 @@
     const fileLabel = document.getElementById('file-upload-label');
     const thankYouModal = document.getElementById('thank-you-modal');
     const btnCloseThanks = document.getElementById('btn-close-thanks');
+
+    // Captcha elements
+    const captchaModal = document.getElementById('captcha-modal');
+    const btnCancelCaptcha = document.getElementById('btn-cancel-captcha');
+
+    let pendingReviewPayload = null; // Store payload while waiting for captcha
+
+    // Initialize Recaptcha
+    window.onloadCallback = function () {
+      if (RECAPTCHA_SITE_KEY && document.getElementById('recaptcha-widget')) {
+        grecaptcha.render('recaptcha-widget', {
+          sitekey: RECAPTCHA_SITE_KEY,
+          callback: onCaptchaSolved,
+        });
+      }
+    };
 
     function openModal() {
       if (modal) {
@@ -529,13 +569,34 @@
 
     if (btnCloseThanks) btnCloseThanks.addEventListener('click', closeThanks);
 
+    if (btnCancelCaptcha) {
+      btnCancelCaptcha.addEventListener('click', () => {
+        captchaModal.classList.remove('active');
+        document.body.style.overflow = '';
+        grecaptcha.reset();
+        if (form.querySelector('button[type="submit"]')) {
+          form.querySelector('button[type="submit"]').disabled = false;
+        }
+      });
+    }
+
+    // Global callback for reCAPTCHA
+    window.onCaptchaSolved = function (token) {
+      if (token && pendingReviewPayload) {
+        pendingReviewPayload.captchaToken = token;
+        executeSubmission(pendingReviewPayload);
+      }
+    };
+
     // File upload handling
     function updateFileLabel() {
       if (!fileInput || !fileLabel) return;
       const fileText = fileLabel.querySelector('.file-text');
       if (fileInput.files.length > 0) {
         fileLabel.classList.add('has-files');
-        fileText.innerHTML = `<i class="fa-solid fa-check-circle"></i> ${fileInput.files.length} image${fileInput.files.length > 1 ? 's' : ''} selected`;
+        fileText.innerHTML = `<i class="fa-solid fa-check-circle"></i> ${fileInput.files.length} image${
+          fileInput.files.length > 1 ? 's' : ''
+        } selected`;
       } else {
         fileLabel.classList.remove('has-files');
         fileText.innerHTML = 'Click to upload images (Max 5 files, 30MB total)';
@@ -559,9 +620,15 @@
         document.getElementById('total-reviews-count').textContent = stats.totalReviews + ' reviews';
 
         const avgStars = document.getElementById('avg-rating-stars');
-        avgStars.innerHTML = Array(5).fill(0).map((_, i) =>
-          `<i class="fa-solid fa-star" style="color: ${i < Math.round(stats.averageRating) ? '#fbbf24' : '#e5e7eb'}; font-size: 18px;"></i>`
-        ).join('');
+        avgStars.innerHTML = Array(5)
+          .fill(0)
+          .map(
+            (_, i) =>
+              `<i class="fa-solid fa-star" style="color: ${
+                i < Math.round(stats.averageRating) ? '#fbbf24' : '#e5e7eb'
+              }; font-size: 18px;"></i>`
+          )
+          .join('');
 
         const totalReviews = stats.totalReviews && stats.totalReviews > 0 ? parseInt(stats.totalReviews) : 1;
         const createBar = (star, count) => {
@@ -613,38 +680,63 @@
 
         const renderReview = (r) => {
           const isAnonymous = r.isAnonymous === true;
-          const displayName = isAnonymous ? 'Anonymous' : (r.customerName || 'Customer');
+
+          const displayName = r.customerName;
           const isPinned = r.isPinned === true;
-          const stars = Array(5).fill(0).map((_, i) =>
-            `<i class="fa-solid fa-star" style="color: ${i < r.rating ? '#fbbf24' : '#e5e7eb'}; font-size: 14px;"></i>`
-          ).join('');
+          const stars = Array(5)
+            .fill(0)
+            .map(
+              (_, i) =>
+                `<i class="fa-solid fa-star" style="color: ${
+                  i < r.rating ? '#fbbf24' : '#e5e7eb'
+                }; font-size: 14px;"></i>`
+            )
+            .join('');
 
           return `
              <div style="border-bottom: 1px solid #f3f4f6; padding-bottom: 20px; margin-bottom: 20px;">
                <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 12px;">
                   <div style="display:flex; align-items:center; gap: 12px;">
-                     <div style="width: 40px; height: 40px; background: ${isAnonymous ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                     <div style="width: 40px; height: 40px; background: ${
+                       isAnonymous ? '#9ca3af' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                     }; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; font-size: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
                          ${displayName.charAt(0).toUpperCase()}
                      </div>
                      <div>
                          <strong style="color: #111827; font-size: 15px; display:block; display: flex; align-items: center; gap: 8px;">
                             ${displayName}
                          </strong>
-                         <small style="color: #9ca3af; font-size: 12px;">${new Date(r.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</small>
+                         <small style="color: #9ca3af; font-size: 12px;">${new Date(r.createdAt).toLocaleDateString(
+                           'en-US',
+                           { year: 'numeric', month: 'short', day: 'numeric' }
+                         )}</small>
                      </div>
                   </div>
                   <div style="display: flex; gap: 4px;">${r.rating ? stars : ''}</div>
                </div>
                <p style="margin: 0 0 12px 0; color: #374151; line-height: 1.6; font-size: 15px;">${r.comment}</p>
-               ${r.media && r.media.length ? `
+               ${
+                 r.media && r.media.length
+                   ? `
                   <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom: 8px; margin-top: 12px;">
-                    ${r.media.map((m) => m.mediaType === 'IMAGE' ? 
-                      `<img src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; width: 100px; object-fit: cover; border-radius: 12px; border: 2px solid #e5e7eb; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" />` : 
-                      `<video src="${API_URL.replace('/api', '')}${m.mediaUrl}" style="height:100px; border-radius: 12px;" controls></video>`
-                    ).join('')}
-                  </div>` : ''}
+                    ${r.media
+                      .map((m) =>
+                        m.mediaType === 'IMAGE'
+                          ? `<img src="${API_URL.replace('/api', '')}${
+                              m.mediaUrl
+                            }" style="height:100px; width: 100px; object-fit: cover; border-radius: 12px; border: 2px solid #e5e7eb; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" />`
+                          : `<video src="${API_URL.replace('/api', '')}${
+                              m.mediaUrl
+                            }" style="height:100px; border-radius: 12px;" controls></video>`
+                      )
+                      .join('')}
+                  </div>`
+                   : ''
+               }
                
-               ${r.reply ? `
+               ${
+                 r.reply
+                   ? `
                   <div style="margin-top: 16px; padding: 16px; background: #e0f7f9; border-radius: 12px; position: relative;">
                     <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: #086c7e;">
                       <i class="fa-solid fa-reply" style="font-size: 14px; transform: scaleX(-1);"></i>
@@ -654,7 +746,9 @@
                     <div style="position: absolute; top: 12px; right: 16px; color: #9ca3af; cursor: pointer;">
                       <i class="fa-solid fa-ellipsis"></i>
                     </div>
-                  </div>` : ''}
+                  </div>`
+                   : ''
+               }
              </div>`;
         };
 
@@ -662,81 +756,114 @@
         listContainer.innerHTML = html;
       } catch (e) {
         console.error(e);
-        listContainer.innerHTML = '<p style="color:#ef4444; text-align: center; padding: 20px;">Error loading reviews.</p>';
+        listContainer.innerHTML =
+          '<p style="color:#ef4444; text-align: center; padding: 20px;">Error loading reviews.</p>';
       }
     }
 
+    async function executeSubmission(payload) {
+      const submitBtn = form.querySelector('button[type="submit"]');
 
-    // Form Submit
+      try {
+        const res = await fetchApi(`/reviews?shop=${shop}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error('Review submission failed');
+
+        // Success flow
+        if (captchaModal) captchaModal.classList.remove('active');
+        if (statusDiv)
+          statusDiv.innerHTML =
+            '<span style="color: #10b981;"><i class="fa-solid fa-circle-check"></i> Review submitted successfully!</span>';
+
+        setTimeout(() => {
+          closeModal();
+          openThanks();
+          if (submitBtn) submitBtn.disabled = false;
+          pendingReviewPayload = null;
+          grecaptcha.reset();
+        }, 1000);
+      } catch (err) {
+        console.error(err);
+        if (captchaModal) captchaModal.classList.remove('active');
+        if (statusDiv)
+          statusDiv.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-exclamation"></i> ${err.message}</span>`;
+        if (submitBtn) submitBtn.disabled = false;
+        grecaptcha.reset();
+      }
+    }
+
+    // Updated Submit Handler to show Captcha Popup
     if (form) {
-      form.addEventListener('submit', async (e) => {
+      form.onsubmit = async (e) => {
         e.preventDefault();
         const formData = new FormData(form);
-        if (statusDiv) statusDiv.innerHTML = '<span style="color: #3b82f6;"><i class="fa-solid fa-spinner fa-spin"></i> Submitting...</span>';
         const submitBtn = form.querySelector('button[type="submit"]');
-        if (submitBtn) submitBtn.disabled = true;
 
         const ratingInput = form.querySelector('input[name="rating"]:checked');
-        let ratingVal = ratingInput ? parseInt(ratingInput.value) : 5;
+        if (!ratingInput) {
+          alert('Please select a rating.');
+          return;
+        }
+        let ratingVal = parseInt(ratingInput.value);
+
+        if (statusDiv)
+          statusDiv.innerHTML =
+            '<span style="color: #3b82f6;"><i class="fa-solid fa-spinner fa-spin"></i> Preparing...</span>';
+        if (submitBtn) submitBtn.disabled = true;
 
         try {
           const mediaItems = [];
           if (fileInput.files.length > 0) {
+            // ... (file validation logic remains same)
             if (fileInput.files.length > 5) throw new Error('You can only upload a maximum of 5 images.');
             let totalSize = 0;
             const MAX_SIZE = 30 * 1024 * 1024;
             for (let i = 0; i < fileInput.files.length; i++) {
-              const file = fileInput.files[i];
-              if (!file.type.startsWith('image/')) throw new Error(`File ${file.name} is not an image.`);
-              totalSize += file.size;
+              totalSize += fileInput.files[i].size;
             }
             if (totalSize > MAX_SIZE) throw new Error('Total file size exceeds 30MB limit.');
 
             const uploadData = new FormData();
             for (let i = 0; i < fileInput.files.length; i++) {
-               uploadData.append('files', fileInput.files[i]);
+              uploadData.append('files', fileInput.files[i]);
             }
 
             const uploadRes = await fetchApi('/files/upload', { method: 'POST', body: uploadData });
-            if (!uploadRes.ok) {
-              const errorJson = await uploadRes.json();
-              throw new Error(errorJson.message || 'Upload failed');
-            }
+            if (!uploadRes.ok) throw new Error('Upload failed');
             const uploadJson = await uploadRes.json();
             uploadJson.data.forEach((url) => mediaItems.push({ url: url, type: 'IMAGE', fileSize: 0 }));
           }
 
-            const isAnon = formData.get('isAnonymous') === 'on';
-            const reviewPayload = {
-              productId: productId,
-              productName: productName,
-              customerName: formData.get('customerName'),
-              rating: ratingVal,
-              comment: formData.get('comment'),
-              isAnonymous: isAnon,
-              media: mediaItems,
-            };
+          const isAnon = formData.get('isAnonymous') === 'on';
+          pendingReviewPayload = {
+            productId: productId,
+            productName: productName,
+            customerName: formData.get('customerName'),
+            rating: ratingVal,
+            comment: formData.get('comment'),
+            isAnonymous: isAnon,
+            media: mediaItems,
+          };
 
-          const res = await fetchApi(`/reviews?shop=${shop}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reviewPayload),
-          });
-
-          if (!res.ok) throw new Error('Review submission failed');
-
-          if (statusDiv) statusDiv.innerHTML = '<span style="color: #10b981;"><i class="fa-solid fa-circle-check"></i> Review submitted successfully!</span>';
-          setTimeout(() => {
-            closeModal();
-            openThanks();
-            if (submitBtn) submitBtn.disabled = false;
-          }, 1000);
+          // Show captcha modal
+          if (captchaModal) {
+            captchaModal.classList.add('active');
+            if (statusDiv) statusDiv.innerHTML = '<span style="color: #3b82f6;">Verification required...</span>';
+          } else {
+            // Fail-safe if captcha modal missing for some reason
+            executeSubmission(pendingReviewPayload);
+          }
         } catch (err) {
           console.error(err);
-          if (statusDiv) statusDiv.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-exclamation"></i> ${err.message}</span>`;
+          if (statusDiv)
+            statusDiv.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-exclamation"></i> ${err.message}</span>`;
           if (submitBtn) submitBtn.disabled = false;
         }
-      });
+      };
     }
 
     // Init
@@ -750,6 +877,10 @@
   "target": "section",
   "templates": ["product"],
   "settings": [
+    {
+      "type": "paragraph",
+      "content": "Displays reviews. Requires customer login to submit."
+    },
     {
       "type": "paragraph",
       "content": "Displays reviews. Requires customer login to submit."

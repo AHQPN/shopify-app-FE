@@ -20,13 +20,14 @@ import {
     TextField,
     Checkbox,
 } from "@shopify/polaris";
-import { PinIcon, CheckCircleIcon, StarFilledIcon } from "@shopify/polaris-icons";
+import { PinIcon, CheckCircleIcon, StarFilledIcon, ViewIcon, HideIcon } from "@shopify/polaris-icons";
 import apiClient from "../services/api";
 
 interface ReviewMedia {
     id: number;
     mediaUrl: string;
     mediaType: string;
+    isHidden: boolean;
 }
 
 interface Review {
@@ -41,7 +42,6 @@ interface Review {
     status: string; // Updated to match Enum (PUBLISHED, HIDDEN, ARCHIVED)
     hideReason: string | null;
     createdAt: string;
-    isRead: boolean;
     reply: string | null;
     isPinned: boolean;
     isAnonymous: boolean;
@@ -55,7 +55,7 @@ interface ReviewStats {
     threeStars: number;
     fourStars: number;
     fiveStars: number;
-    unReadReview?: number;
+    unModeratedCount?: number;
 }
 
 const ExpandableComment = ({ text, maxLength = 200, isExpanded, onToggle }: { 
@@ -149,9 +149,9 @@ export default function ReviewsPage() {
             }
             if (statusVal === 'PUBLISHED') params.status = true;
             else if (statusVal === 'HIDDEN') params.status = false;
-            
-            if (readVal === 'READ') params.isRead = true;
-            else if (readVal === 'UNREAD') params.isRead = false;
+
+            if (readVal === 'CHECKED') params.isRead = true;
+            else if (readVal === 'UNCHECKED') params.isRead = false;
 
             const response = await apiClient.get(`/reviews`, { params });
             const payload = response.data;
@@ -200,25 +200,6 @@ export default function ReviewsPage() {
         fetchHideReasons();
     }, []);
 
-    const handleMarkAsRead = async (ids: number[], isRead: boolean = true) => {
-        // Optimistic update
-        setReviews(prev => prev.map(r => 
-            ids.includes(r.id) ? { ...r, isRead } : r
-        ));
-
-        try {
-            await apiClient.put("/reviews/read", ids, {
-                params: { isRead }
-            });
-            // No need to fetchReviews here as we updated optimistically, 
-            // but we fetch stats to keep them in sync
-            fetchStats();
-        } catch (e) {
-            console.error("Failed to update read status", e);
-            // Rollback if needed (for simplicity, we usually refresh on error)
-            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
-        }
-    };
 
     const handleOpenResponseModal = (review: Review) => {
         setParentForReplies(review);
@@ -227,10 +208,8 @@ export default function ReviewsPage() {
         setCurrentReplyId(null); // No longer needed for flattening
         setExpandedId(null);
         
-        // If not read, mark it as read when opening to reply
-        if (!review.isRead) {
-            handleMarkAsRead([review.id]);
-        }
+        // If not moderated (no hide reason), it will be marked implicitly if the backend sets a reason on reply
+        // For now, we just open the modal.
     };
 
     const handleRatingChange = (value: string) => {
@@ -266,8 +245,10 @@ export default function ReviewsPage() {
                 rating: null,
                 media: []
             });
+            setReviews(prev => prev.map(r => 
+                r.id === parentForReplies.id ? { ...r, reply: adminResponse } : r
+            ));
             setIsResponseModalOpen(false);
-            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
         } catch (e) {
             console.error("Failed to save response", e);
         } finally {
@@ -279,9 +260,26 @@ export default function ReviewsPage() {
         const newPinnedStatus = !review.isPinned;
         try {
             await apiClient.put(`/reviews/${review.id}/${newPinnedStatus ? 'pin' : 'unpin'}`);
-            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
+            setReviews(prev => prev.map(r => 
+                r.id === review.id ? { ...r, isPinned: newPinnedStatus } : r
+            ));
         } catch (e) {
             console.error("Failed to toggle pin", e);
+        }
+    };
+
+    const handleToggleMediaStatus = async (mediaId: number, currentStatus: boolean) => {
+        const newStatus = !currentStatus;
+        try {
+            await apiClient.put(`/reviews/media/${mediaId}/${newStatus}`);
+            setReviews(prev => prev.map(r => ({
+                ...r,
+                media: r.media.map(m => 
+                    m.id === mediaId ? { ...m, isHidden: newStatus } : m
+                )
+            })));
+        } catch (e) {
+            console.error("Failed to toggle media status", e);
         }
     };
 
@@ -306,8 +304,12 @@ export default function ReviewsPage() {
                 hideReason
             });
             
-            // Refresh main data
-            fetchReviews(page, ratingFilter, productSearch, statusFilter, readFilter);
+            // Update local state
+            setReviews(prev => prev.map(r => 
+                r.id === id ? { ...r, status, hideReason: hideReason || null } : r
+            ));
+            
+            // Refresh stats
             fetchStats();
         } catch (e) {
             console.error("Failed to update status", e);
@@ -330,11 +332,12 @@ export default function ReviewsPage() {
 
     const rowMarkup = reviews.map(
         (review, index) => {
-            const { id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason, isRead, isPinned, isAnonymous } = review;
+            const { id, customerName, rating, comment, createdAt, productName, media, status, shop, hideReason, isPinned, isAnonymous } = review;
             const displayRating = rating || 0;
             const isPublished = status === 'PUBLISHED';
             const isHidden = status === 'HIDDEN';
-            const rowStyle = isRead ? { opacity: 0.7, filter: 'grayscale(0.5)' } : { backgroundColor: '#f9f9f9' };
+            const isModerated = hideReason !== null || status === 'PUBLISHED';
+            const rowStyle = isModerated ? { opacity: 0.7, filter: 'grayscale(0.5)' } : { backgroundColor: '#f9f9f9' };
 
             return (
                 <IndexTable.Row
@@ -342,8 +345,8 @@ export default function ReviewsPage() {
                     key={id}
                     selected={selectedResources.includes(id.toString())}
                     position={index}
-                    disabled={isRead}
-                    tone={isRead ? "subdued" : undefined}
+                    disabled={isModerated}
+                    tone={isModerated ? "subdued" : undefined}
                 >
                     <IndexTable.Cell>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '12px 0' }}>
@@ -351,10 +354,10 @@ export default function ReviewsPage() {
                                 <Text variant="bodyMd" fontWeight="bold" as="span">
                                     {customerName || 'Customer'}
                                 </Text>
-                                {isRead ? (
+                                {isModerated ? (
                                     <Icon source={CheckCircleIcon} tone="success" />
                                 ) : (
-                                    <span style={{ width: '8px', height: '8px', backgroundColor: '#008060', borderRadius: '50%', display: 'inline-block' }} title="New/Unread" />
+                                    <span style={{ width: '8px', height: '8px', backgroundColor: '#008060', borderRadius: '50%', display: 'inline-block' }} title="New/Unmoderated" />
                                 )}
                             </div>
                             
@@ -370,7 +373,14 @@ export default function ReviewsPage() {
                                     onClick={() => handleTogglePin(review)}
                                     pressed={isPinned}
                                 />
+                                <span style={{ marginLeft: '4px', fontSize: '12px', color: '#637381', fontWeight: 'bold' }}>{isPinned ? 'Pinned' : 'Not Pinned'}</span>
                             </div>
+                        </div>
+                    </IndexTable.Cell>
+
+                    <IndexTable.Cell>
+                        <div style={{ width: 'max-content' }}>
+                            {formatRelativeTime(createdAt)}
                         </div>
                     </IndexTable.Cell>
                     
@@ -393,14 +403,37 @@ export default function ReviewsPage() {
                                     {media.slice(0, 5).map(m => (
                                         <div 
                                             key={m.id} 
-                                            onClick={() => setZoomedImage(m.mediaUrl)}
-                                            style={{ cursor: 'pointer' }}
+                                            style={{ cursor: 'pointer', position: 'relative' }}
                                         >
-                                            <Thumbnail
-                                                source={m.mediaType === "IMAGE" ? m.mediaUrl : ""}
-                                                alt="media"
-                                                size="large"
-                                            />
+                                            <div onClick={() => setZoomedImage(m.mediaUrl)}>
+                                                <Thumbnail
+                                                    source={m.mediaType === "IMAGE" ? m.mediaUrl : ""}
+                                                    alt="media"
+                                                    size="large"
+                                                />
+                                            </div>
+                                            <div 
+                                                style={{ 
+                                                    position: 'absolute', 
+                                                    top: '4px', 
+                                                    right: '4px', 
+                                                    backgroundColor: 'white', 
+                                                    borderRadius: '4px', 
+                                                    padding: '2px',
+                                                    boxShadow: '0 0 4px rgba(0,0,0,0.2)',
+                                                    zIndex: 2
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <Button
+                                                    icon={m.isHidden ? ViewIcon : HideIcon}
+                                                    variant="secondary"
+                                                    size="micro"
+                                                    onClick={() => handleToggleMediaStatus(m.id, m.isHidden)}
+                                                    tone={m.isHidden ? "critical" : undefined}
+                                                    accessibilityLabel={m.isHidden ? "Click to show this media" : "Click to hide this media"}
+                                                />
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -462,7 +495,7 @@ export default function ReviewsPage() {
                     </IndexTable.Cell>
 
                     <IndexTable.Cell>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: 'max-content' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: 'max-content', padding: '12px'}}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <Badge tone={isPublished ? 'success' : 'critical'}>
                                     {isPublished ? 'Published' : 'Hidden'}
@@ -476,7 +509,7 @@ export default function ReviewsPage() {
                                 </Button>
                             </div>
                             {isHidden && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                     <Badge tone="warning" size="small">
                                         {hideReason ? `Reason: ${hideReason}` : 'Reason: N/A'}
                                     </Badge>
@@ -496,21 +529,8 @@ export default function ReviewsPage() {
                         </div>
                     </IndexTable.Cell>
 
-                    <IndexTable.Cell>
-                        <div style={{ width: 'max-content' }}>
-                            {formatRelativeTime(createdAt)}
-                        </div>
-                    </IndexTable.Cell>
+                    
 
-                    <IndexTable.Cell>
-                        <div style={{ display: 'flex', justifyContent: 'center' }}>
-                            <Checkbox
-                                label=""
-                                checked={isRead}
-                                onChange={() => handleMarkAsRead([id], !isRead)}
-                            />
-                        </div>
-                    </IndexTable.Cell>
                 </IndexTable.Row>
             );
         }
@@ -554,11 +574,11 @@ export default function ReviewsPage() {
                                 </LegacyCard>
                             </Grid.Cell>
                             
-                            {stats.unReadReview !== undefined && (
+                            {stats.unModeratedCount !== undefined && (
                                 <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
                                     <LegacyCard sectioned>
-                                        <Text variant="headingSm" as="h6">Unread Reviews</Text>
-                                        <Text variant="heading2xl" tone="critical" as="p">{stats.unReadReview}</Text>
+                                        <Text variant="headingSm" as="h6">New Reviews</Text>
+                                        <Text variant="heading2xl" tone="critical" as="p">{stats.unModeratedCount}</Text>
                                     </LegacyCard>
                                 </Grid.Cell>
                             )}
@@ -633,11 +653,11 @@ export default function ReviewsPage() {
                             </div>
                             <div style={{ flex: '1', minWidth: '120px' }}>
                                 <Select
-                                    label="Read Status"
+                                    label="Moderation"
                                     options={[
                                         { label: 'All', value: '' },
-                                        { label: 'Read', value: 'READ' },
-                                        { label: 'Unread', value: 'UNREAD' },
+                                        { label: 'Checked', value: 'CHECKED' },
+                                        { label: 'Unchecked', value: 'UNCHECKED' },
                                     ]}
                                     value={readFilter}
                                     onChange={handleReadChange}
@@ -651,10 +671,9 @@ export default function ReviewsPage() {
                             selectable={false}
                             headings={[
                                 { title: "Details" },
-                                { title: "Review Content" },
-                                { title: "Status" },
                                 { title: "Date" },
-                                { title: "Read" },
+                                { title: "Review content" },
+                                { title: "Status" },
                             ]}
                             loading={loading}
                             emptyState={

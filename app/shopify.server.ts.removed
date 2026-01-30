@@ -1,6 +1,0 @@
-# ===== REMOVED - Node.js backend no longer used =====
-# This file has been removed as the project now uses Spring Boot backend
-# The React frontend is now a standalone SPA that connects to Spring Boot API
-
-# Original file: app/shopify.server.ts
-# Functionality moved to: Spring Boot application (to be created)
