@@ -1,0 +1,284 @@
+{% assign is_in_wishlist = false %}
+{% assign wishlist_json = '[]' %}
+
+{% if customer %}
+  {% assign wishlist_value = customer.metafields.custom.wishlist.value %}
+  {% if wishlist_value %}
+    {% assign current_variant = product.selected_or_first_available_variant %}
+    {% for item in wishlist_value %}
+      {% if item.id == current_variant.id %}
+        {% assign is_in_wishlist = true %}
+      {% endif %}
+    {% endfor %}
+
+    {% capture wishlist_gids %}[{% for item in wishlist_value %}"gid://shopify/ProductVariant/{{ item.id }}"{% unless forloop.last %},{% endunless %}{% endfor %}]{% endcapture %}
+    {% assign wishlist_json = wishlist_gids | strip_newlines %}
+  {% endif %}
+{% endif %}
+
+<div class="wishlist-icon-container floating-{{ block.settings.position }}" {{ block.shopify_attributes }}>
+  <button
+    type="button"
+    id="wishlist-icon-{{ section.id }}-{{ block.id }}-{{ product.id }}"
+    class="wishlist-icon-btn{% if is_in_wishlist %} is-active{% endif %}"
+    aria-label="Toggle Wishlist"
+    data-product-id="{{ product.selected_or_first_available_variant.id }}"
+    data-customer-id="{{ customer.id }}"
+    data-is-logged-in="{% if customer %}true{% else %}false{% endif %}"
+    data-login-url="{{ routes.account_login_url }}"
+    data-require-login="true"
+    data-shop="{{ shop.permanent_domain }}"
+  >
+    <svg
+      class="icon-heart"
+      width="{{ block.settings.icon_size }}"
+      height="{{ block.settings.icon_size }}"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+    </svg>
+    <div class="wishlist-loading-spinner"></div>
+  </button>
+</div>
+
+<style>
+  .wishlist-icon-container {
+    position: absolute;
+    z-index: 10;
+    margin: 12px;
+  }
+
+  .wishlist-icon-container.floating-top-right {
+    top: 0;
+    right: 0;
+  }
+
+  .wishlist-icon-container.floating-top-left {
+    top: 0;
+    left: 0;
+  }
+
+  /* Support for relative parent containers if needed */
+  .product-card, .card, .card-wrapper {
+    position: relative !important;
+  }
+
+  .wishlist-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: {{ block.settings.icon_size | plus: 16 }}px;
+    height: {{ block.settings.icon_size | plus: 16 }}px;
+    background: {{ block.settings.bg_color }};
+    color: {{ block.settings.icon_color }};
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    padding: 0;
+  }
+
+  .wishlist-icon-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    background: {{ block.settings.bg_color_hover }};
+  }
+
+  .wishlist-icon-btn.is-active {
+    color: {{ block.settings.icon_color_active }};
+  }
+
+  .wishlist-icon-btn.is-active .icon-heart {
+    fill: {{ block.settings.icon_color_active }};
+    stroke: {{ block.settings.icon_color_active }};
+    animation: heart-beat-mini 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .wishlist-icon-btn.is-loading .icon-heart {
+    opacity: 0;
+  }
+
+  .wishlist-icon-btn.is-loading .wishlist-loading-spinner {
+    display: block;
+  }
+
+  .wishlist-loading-spinner {
+    display: none;
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(0,0,0,0.1);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spinner-spin 0.6s linear infinite;
+  }
+
+  @keyframes heart-beat-mini {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes spinner-spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+
+<script>
+  (function () {
+    const btnId = 'wishlist-icon-{{ section.id }}-{{ block.id }}-{{ product.id }}';
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+
+    const API_URL = '/apps/ext/wishlist';
+
+    async function fetchApi(endpoint, options = {}) {
+      return fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+    }
+
+    if (!btn.dataset.initialized) {
+      btn.dataset.initialized = 'true';
+      const shop = btn.dataset.shop;
+
+      // Helper to get most up-to-date variant ID (useful for PDP)
+      const getActiveVariantId = () => {
+        // 1. Look for the hidden input that theme's variant picker updates
+        const activeInput = document.querySelector('form[action*="/cart/add"] input[name="id"]');
+        if (activeInput && activeInput.value) return activeInput.value;
+
+        // 2. Fallback to the initially rendered data attribute
+        return btn.dataset.productId;
+      };
+
+      btn.addEventListener('click', async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (this.classList.contains('is-loading')) return;
+
+        if (this.dataset.isLoggedIn !== 'true') {
+          window.location.href = this.dataset.loginUrl;
+          return;
+        }
+
+        const currentId = getActiveVariantId();
+        const variantGid = currentId.startsWith('gid://') ? currentId : `gid://shopify/ProductVariant/${currentId}`;
+        const customerId = this.dataset.customerId;
+
+        this.classList.add('is-loading');
+
+        try {
+          const isActive = this.classList.contains('is-active');
+          const endpoint = isActive ? '/remove' : '/add';
+
+          // Send numeric ID for backend compatibility
+          const cleanId = currentId.replace('gid://shopify/ProductVariant/', '').replace('gid://shopify/Product/', '');
+
+          const res = await fetchApi(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({ shop, customerId, productId: cleanId }),
+          });
+
+          if (!res.ok) throw new Error('API Error');
+
+          const json = await res.json();
+          const updatedWishlist = (json.data || []).map((id) =>
+            String(id).startsWith('gid://') ? id : `gid://shopify/ProductVariant/${id}`
+          );
+
+          const newStatus = updatedWishlist.includes(variantGid);
+
+          // Update state and broadcast sync
+          this.classList.toggle('is-active', newStatus);
+          document.dispatchEvent(
+            new CustomEvent('wishlist:sync', {
+              detail: { productId: variantGid, isActive: newStatus },
+            })
+          );
+        } catch (err) {
+          console.error('[Wishlist Icon Error]', err);
+        } finally {
+          this.classList.remove('is-loading');
+        }
+      });
+
+      // Sync listener
+      document.addEventListener('wishlist:sync', function (e) {
+        const syncId = e.detail.productId.startsWith('gid://')
+          ? e.detail.productId
+          : `gid://shopify/ProductVariant/${e.detail.productId}`;
+        if (syncId === variantGid) {
+          btn.classList.toggle('is-active', e.detail.isActive);
+        }
+      });
+    }
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Floating Wishlist Heart",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["collection", "index", "product"]
+  },
+  "settings": [
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Icon Position",
+      "options": [
+        { "value": "top-right", "label": "Top Right" },
+        { "value": "top-left", "label": "Top Left" }
+      ],
+      "default": "top-right"
+    },
+    {
+      "type": "range",
+      "id": "icon_size",
+      "label": "Icon Size",
+      "min": 16,
+      "max": 32,
+      "step": 2,
+      "default": 20,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "icon_color",
+      "label": "Icon Color",
+      "default": "#2c3e50"
+    },
+    {
+      "type": "color",
+      "id": "icon_color_active",
+      "label": "Active Heart Color",
+      "default": "#ff6b6b"
+    },
+    {
+      "type": "color",
+      "id": "bg_color",
+      "label": "Background Color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "bg_color_hover",
+      "label": "Background Color (Hover)",
+      "default": "#f8f9fa"
+    }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,367 @@
+{% if customer %}
+  {% assign wishlist_value = customer.metafields.custom.wishlist.value %}
+  {% capture wishlist_gids %}[{% for item in wishlist_value %}"gid://shopify/ProductVariant/{{ item.id }}"{% unless forloop.last %},{% endunless %}{% endfor %}]{% endcapture %}
+  {% assign wishlist_json = wishlist_gids | strip_newlines %}
+{% else %}
+  {% assign wishlist_json = '[]' %}
+{% endif %}
+
+<script>
+  (function() {
+    const CONFIG = {
+      shop: {{ shop.permanent_domain | json }},
+      customerId: {{ customer.id | json }},
+      isLoggedIn: {% if customer %}true{% else %}false{% endif %},
+      loginUrl: {{ routes.account_login_url | json }},
+      apiUrl: '/apps/ext/wishlist',
+      initialWishlist: {{ wishlist_json }},
+      // Selectors
+      cardSelector: {{ block.settings.card_selector | default: '.card__inner, .card-wrapper, .product-card, .product-card-wrapper' | json }},
+      iconPosition: {{ block.settings.position | json }},
+      iconSize: {{ block.settings.icon_size | default: 20 | json }},
+      iconColor: {{ block.settings.icon_color | default: '#2c3e50' | json }},
+      iconColorActive: {{ block.settings.icon_color_active | default: '#ff6b6b' | json }},
+      bgColor: {{ block.settings.bg_color | default: '#ffffff' | json }},
+      bgOpacity: {{ block.settings.bg_opacity | default: 0.9 | json }}
+    };
+
+    let currentWishlist = new Set(CONFIG.initialWishlist);
+
+    // --- Helper Functions ---
+
+    function getProductGid(card) {
+      const getPid = (el) => {
+        // 1. Priority: Look for data-variant-id (New implementation)
+        const vId = el.getAttribute('data-variant-id') || el.closest('[data-variant-id]')?.getAttribute('data-variant-id');
+        if (vId) return { id: vId, type: 'ProductVariant' };
+
+        // 2. Fallback: Search in common elements
+        const idElement = el.querySelector('[id*="Badge-"], [id*="title-"], [id*="CardLink-"], [id*="StandardCardNoMediaLink-"]');
+        if (idElement) {
+          const match = idElement.id.match(/-(\d+)$/);
+          if (match) return { id: match[1], type: 'ProductVariant' }; // Fallback to variant if we assume it's a color-split card
+        }
+
+        // 3. Fallback: data-product-id (Older implementation)
+        const pId = el.getAttribute('data-product-id') || el.querySelector('[data-product-id]')?.getAttribute('data-product-id');
+        if (pId) return { id: String(pId).replace('gid://shopify/Product/', ''), type: 'Product' };
+
+        return null;
+      };
+
+      const result = getPid(card);
+      if (result) {
+        // If it's a base product, we might need to append a "/" or logic, but for now we prioritize variants
+        const prefix = result.type === 'ProductVariant' ? 'gid://shopify/ProductVariant/' : 'gid://shopify/Product/';
+        return `${prefix}${result.id}`;
+      }
+
+      console.debug('[Wishlist Grid] Could not find ID for card:', card);
+      return null;
+    }
+
+    function createHeartIcon(productId) {
+      console.debug('[Wishlist Grid] Injecting heart for:', productId);
+      const container = document.createElement('div');
+      container.className = `wishlist-grid-heart-container floating-${CONFIG.iconPosition}`;
+      container.dataset.productId = productId;
+      
+      const isActive = currentWishlist.has(productId);
+
+      container.innerHTML = `
+        <button type="button" class="wishlist-grid-heart-btn ${isActive ? 'is-active' : ''}" aria-label="Toggle Wishlist">
+          <svg width="${CONFIG.iconSize}" height="${CONFIG.iconSize}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+          </svg>
+          <div class="wishlist-grid-spinner"></div>
+        </button>
+      `;
+
+      const btn = container.querySelector('button');
+      btn.addEventListener('click', (e) => handleHeartClick(e, productId, btn));
+      
+      return container;
+    }
+
+    async function handleHeartClick(e, productId, btn) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (btn.classList.contains('is-loading')) return;
+
+      if (!CONFIG.isLoggedIn) {
+        window.location.href = CONFIG.loginUrl;
+        return;
+      }
+
+      btn.classList.add('is-loading');
+      
+      try {
+        const isActive = btn.classList.contains('is-active');
+        const endpoint = isActive ? '/remove' : '/add';
+
+        // Ensure we send numeric ID if needed or consistent GID
+        const cleanId = productId.replace('gid://shopify/ProductVariant/', '').replace('gid://shopify/Product/', '');
+
+        const res = await fetch(CONFIG.apiUrl + endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            customerId: CONFIG.customerId, 
+            productId: cleanId,
+            shop: CONFIG.shop 
+          })
+        });
+
+        if (!res.ok) throw new Error('API Failure');
+
+        const json = await res.json();
+        // Backend returns numeric IDs, convert to GID for frontend consistency
+        const updatedList = (json.data || []).map(id => 
+          String(id).startsWith('gid://') ? id : `gid://shopify/ProductVariant/${id}`
+        );
+        
+        const isNowActive = updatedList.includes(productId);
+
+        // Update local state and sync
+        if (isNowActive) currentWishlist.add(productId);
+        else currentWishlist.delete(productId);
+
+        updateAllHearts(productId, isNowActive);
+        
+        // Dispatch global sync event for other block types
+        document.dispatchEvent(new CustomEvent('wishlist:sync', {
+          detail: { productId, isActive: isNowActive }
+        }));
+
+      } catch (err) {
+        console.error('[Wishlist Grid Error]', err);
+      } finally {
+        btn.classList.remove('is-loading');
+      }
+    }
+
+    function updateAllHearts(productId, isActive) {
+      const numericId = productId.replace('gid://shopify/Product/', '');
+      // Match both GID and numeric ID to sync across different block types
+      const targets = document.querySelectorAll(`[data-product-id="${productId}"], [data-product-id="${numericId}"]`);
+      
+      targets.forEach(el => {
+        // If it's a grid container I created
+        if (el.classList.contains('wishlist-grid-heart-container')) {
+            const btn = el.querySelector('button');
+            if (btn) btn.classList.toggle('is-active', isActive);
+        } else {
+            // If it's a standard button (like wishlist.liquid)
+            el.classList.toggle('is-active', isActive);
+        }
+      });
+    }
+
+    function injectToCard(card) {
+      if (card.querySelector('.wishlist-grid-heart-container')) return;
+
+      const productId = getProductGid(card);
+      if (!productId) return;
+
+      // Ensure card is relative for positioning
+      if (window.getComputedStyle(card).position === 'static') {
+        card.style.position = 'relative';
+      }
+
+      const heart = createHeartIcon(productId);
+      card.appendChild(heart);
+    }
+
+    // --- Core Logic ---
+
+    function init() {
+      // 1. Initial Scan
+      document.querySelectorAll(CONFIG.cardSelector).forEach(injectToCard);
+
+      // 2. Watch for dynamic content (Infinite scroll / Load more)
+      const observer = new MutationObserver((mutations) => {
+        mutations.forEach(mutation => {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === 1) {
+              if (node.matches(CONFIG.cardSelector)) injectToCard(node);
+              else node.querySelectorAll(CONFIG.cardSelector).forEach(injectToCard);
+            }
+          });
+        });
+      });
+
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      // 3. Listen for sync events from other blocks
+      document.addEventListener('wishlist:sync', (e) => {
+        const gid = e.detail.productId.startsWith('gid://') ? e.detail.productId : `gid://shopify/ProductVariant/${e.detail.productId}`;
+        if (e.detail.isActive) currentWishlist.add(gid);
+        else currentWishlist.delete(gid);
+        updateAllHearts(gid, e.detail.isActive);
+      });
+    }
+
+    // Run on DOM ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+
+  })();
+</script>
+
+<style>
+  .product-card, .card, .card-wrapper, .card__inner, .product-card-wrapper {
+    position: relative !important;
+    overflow: visible !important;
+  }
+
+  .wishlist-grid-heart-container {
+    position: absolute;
+    z-index: 10;
+    margin: 10px;
+  }
+
+  .wishlist-grid-heart-container.floating-top-right { top: 0; right: 0; }
+  .wishlist-grid-heart-container.floating-top-left { top: 0; left: 0; }
+  .wishlist-grid-heart-container.floating-bottom-right { bottom: 0; right: 0; }
+  .wishlist-grid-heart-container.floating-bottom-left { bottom: 0; left: 0; }
+
+  .wishlist-grid-heart-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: {{ block.settings.icon_size | plus: 12 }}px;
+    height: {{ block.settings.icon_size | plus: 12 }}px;
+    background: {{ block.settings.bg_color }};
+    opacity: {{ block.settings.bg_opacity }};
+    color: {{ block.settings.icon_color }};
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    padding: 0;
+    position: relative;
+  }
+
+  .wishlist-grid-heart-btn:hover {
+    transform: scale(1.15);
+    opacity: 1;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+  }
+
+  .wishlist-grid-heart-btn.is-active {
+    color: {{ block.settings.icon_color_active }};
+  }
+
+  .wishlist-grid-heart-btn.is-active svg {
+    fill: {{ block.settings.icon_color_active }};
+    stroke: {{ block.settings.icon_color_active }};
+    animation: heart-pop 0.3s ease-out;
+  }
+
+  .wishlist-grid-heart-btn.is-loading svg {
+    opacity: 0;
+  }
+
+  .wishlist-grid-spinner {
+    display: none;
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(0,0,0,0.1);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: grid-spin 0.6s linear infinite;
+  }
+
+  .wishlist-grid-heart-btn.is-loading .wishlist-grid-spinner {
+    display: block;
+  }
+
+  @keyframes heart-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.25); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes grid-spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+
+{% schema %}
+{
+  "name": "Wishlist Grid Icons",
+  "target": "body",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Selection Logic"
+    },
+    {
+      "type": "text",
+      "id": "card_selector",
+      "label": "Product Card Selector",
+      "info": "Example: .card-wrapper (Dawn). Leave blank to use auto-detected selectors.",
+      "default": ".card-wrapper, .product-card, .grid-view-item"
+    },
+    {
+      "type": "header",
+      "content": "Style & Position"
+    },
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position on Card",
+      "options": [
+        { "value": "top-right", "label": "Top Right" },
+        { "value": "top-left", "label": "Top Left" },
+        { "value": "bottom-right", "label": "Bottom Right" },
+        { "value": "bottom-left", "label": "Bottom Left" }
+      ],
+      "default": "top-right"
+    },
+    {
+      "type": "range",
+      "id": "icon_size",
+      "label": "Icon Size",
+      "min": 14,
+      "max": 28,
+      "step": 2,
+      "default": 18,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "icon_color",
+      "label": "Icon Color",
+      "default": "#2c3e50"
+    },
+    {
+      "type": "color",
+      "id": "icon_color_active",
+      "label": "Active Heart Color",
+      "default": "#ff6b6b"
+    },
+    {
+      "type": "color",
+      "id": "bg_color",
+      "label": "Background Color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "bg_opacity",
+      "label": "Background Opacity",
+      "min": 0,
+      "max": 1,
+      "step": 0.1,
+      "default": 0.9
+    }
+  ]
+}
+{% endschema %}

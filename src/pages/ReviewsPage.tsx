@@ -20,7 +20,7 @@ import {
     TextField,
     Checkbox,
 } from "@shopify/polaris";
-import { PinIcon, CheckCircleIcon, StarFilledIcon, ViewIcon, HideIcon } from "@shopify/polaris-icons";
+import { PinIcon, CheckCircleIcon, StarFilledIcon, ViewIcon, HideIcon, ReplayIcon } from "@shopify/polaris-icons";
 import apiClient from "../services/api";
 
 interface ReviewMedia {
@@ -479,6 +479,7 @@ export default function ReviewsPage() {
                                 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: '#086c7e' }}>
                                         <Text variant="bodyMd" fontWeight="bold" as="span">Store Response</Text>
+                                        <Icon source={ReplayIcon} />
                                     </div>
                                     <div style={{ 
                                         wordBreak: 'break-word', 

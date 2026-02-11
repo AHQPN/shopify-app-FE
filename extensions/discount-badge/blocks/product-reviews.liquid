@@ -471,7 +471,7 @@
     const productName = container.dataset.productName;
     const shop = container.dataset.shop;
 
-    const API_URL = 'https://cf9506a7798e.ngrok-free.app/api';
+    const API_URL = 'https://7f74-2405-4800-5f18-4000-5b7-c93f-e7fa-8ce2.ngrok-free.app/api';
     const RECAPTCHA_SITE_KEY = '6LdAx1osAAAAAEqjehGbSgDvERxdVwPKDUcgxOrn';
 
     // Helper to fetch with Ngrok skip header
@@ -615,6 +615,7 @@
         if (!res.ok) throw new Error('Failed to load stats');
         const json = await res.json();
         const stats = json.data;
+        if (!stats) return;
 
         document.getElementById('avg-rating-value').textContent = stats.averageRating.toFixed(1);
         document.getElementById('total-reviews-count').textContent = stats.totalReviews + ' reviews';

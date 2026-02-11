@@ -1,0 +1,359 @@
+{% comment %}
+  Floating Wishlist App Embed
+  Global floating heart icon with slide-out drawer for wishlist management.
+{% endcomment %}
+
+{% if customer %}
+  {% assign wishlist_items = customer.metafields.custom.wishlist.value %}
+  {% capture wishlist_json %}[{% for item in wishlist_items %}"gid://shopify/ProductVariant/{{ item.id }}"{% unless forloop.last %},{% endunless %}{% endfor %}]{% endcapture %}
+{% else %}
+  {% assign wishlist_json = '[]' %}
+{% endif %}
+
+<div id="wishlist-app-root" {{ block.shopify_attributes }}>
+  <!-- Floating Button -->
+  <button id="wishlist-floating-btn" class="wishlist-fab" aria-label="Open Wishlist">
+    <div class="wishlist-fab-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+      </svg>
+    </div>
+    <span id="wishlist-count-badge" class="wishlist-badge {% if wishlist_items.size == 0 %}hidden{% endif %}">
+      {{ wishlist_items.size }}
+    </span>
+  </button>
+
+  <!-- Side Drawer Overlay -->
+  <div id="wishlist-drawer-overlay" class="wishlist-drawer-overlay"></div>
+
+  <!-- Side Drawer Content -->
+  <div id="wishlist-drawer" class="wishlist-drawer">
+    <div class="wishlist-drawer-header">
+      <h3>{{ block.settings.title | default: 'My Wishlist' }}</h3>
+      <button id="wishlist-drawer-close" class="wishlist-drawer-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6L6 18M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+
+    <div id="wishlist-drawer-body" class="wishlist-drawer-body">
+      {% if customer %}
+        <div id="wishlist-drawer-grid" class="wishlist-drawer-grid">
+          {% if wishlist_items.size > 0 %}
+            {% for variant in wishlist_items %}
+              {% assign product = variant.product %}
+              <div class="wishlist-drawer-item" data-product-id="{{ variant.id }}" id="drawer-item-{{ variant.id }}">
+                <div class="wishlist-drawer-item-img">
+                  <img
+                    src="{{ variant.image | default: product.featured_image | img_url: '150x150', crop: 'center' }}"
+                    alt="{{ variant.title }}"
+                    loading="lazy"
+                    width="150"
+                    height="150"
+                  >
+                </div>
+                <div class="wishlist-drawer-item-info">
+                  <a href="{{ variant.url }}" class="wishlist-drawer-item-title">
+                    {{ product.title }}
+                    {% unless variant.title contains 'Default' %} - {{ variant.title }}{% endunless %}
+                  </a>
+                  <p class="wishlist-drawer-item-price">{{ variant.price | money }}</p>
+                  <button
+                    class="wishlist-drawer-remove"
+                    data-product-gid="gid://shopify/ProductVariant/{{ variant.id }}"
+                  >
+                    {{ block.settings.remove_text | default: 'Remove' }}
+                  </button>
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="wishlist-drawer-empty">
+              <p>{{ block.settings.empty_text | default: 'Your wishlist is empty.' }}</p>
+            </div>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="wishlist-drawer-login">
+          <p>Please <a href="{{ routes.account_login_url }}">login</a> to sync your wishlist.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+  :root {
+    --wishlist-primary: {{ block.settings.primary_color | default: '#ff6b6b' }};
+    --wishlist-bg: {{ block.settings.bg_color | default: '#ffffff' }};
+  }
+
+  /* Floating Action Button */
+  .wishlist-fab {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--wishlist-bg);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+    border: none;
+    cursor: pointer;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.3s ease;
+  }
+  .wishlist-fab:hover { transform: scale(1.1); }
+  .wishlist-fab-icon svg { width: 28px; height: 28px; color: var(--wishlist-primary); fill: transparent; transition: fill 0.3s; }
+  .wishlist-fab:hover svg { fill: var(--wishlist-primary); }
+
+  .wishlist-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: var(--wishlist-primary);
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    border: 2px solid white;
+  }
+  .wishlist-badge.hidden { display: none; }
+
+  /* Drawer CSS */
+  .wishlist-drawer-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 2100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .wishlist-drawer-overlay.is-active { opacity: 1; pointer-events: auto; }
+
+  .wishlist-drawer {
+    position: fixed;
+    top: 0; right: -400px;
+    width: 100%;
+    max-width: 400px;
+    height: 100%;
+    background: #fff;
+    z-index: 2200;
+    box-shadow: -5px 0 15px rgba(0,0,0,0.1);
+    transition: right 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+    display: flex;
+    flex-direction: column;
+  }
+  .wishlist-drawer.is-active { right: 0; }
+
+  .wishlist-drawer-header {
+    padding: 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .wishlist-drawer-header h3 { margin: 0; font-size: 1.2rem; }
+  .wishlist-drawer-close { background: none; border: none; cursor: pointer; padding: 5px; color: #666; }
+
+  .wishlist-drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+
+  /* Item Styles */
+  .wishlist-drawer-item { display: flex; gap: 15px; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f9f9f9; }
+  .wishlist-drawer-item-img { width: 80px; height: 80px; border-radius: 4px; overflow: hidden; background: #f0f0f0; flex-shrink: 0; }
+  .wishlist-drawer-item-img img { width: 100%; height: 100%; object-fit: cover; }
+  .wishlist-drawer-item-info { flex: 1; }
+  .wishlist-drawer-item-title { display: block; font-weight: 500; text-decoration: none; color: #333; margin-bottom: 4px; font-size: 0.95rem; }
+  .wishlist-drawer-item-price { margin: 0 0 8px 0; color: #666; font-size: 0.9rem; }
+  .wishlist-drawer-remove { background: none; border: none; padding: 0; color: #999; text-decoration: underline; font-size: 0.8rem; cursor: pointer; }
+  .wishlist-drawer-remove:hover { color: #ff6b6b; }
+
+  .wishlist-drawer-empty, .wishlist-drawer-login { text-align: center; padding: 40px 0; color: #666; }
+</style>
+
+<script>
+  (function() {
+    const CONFIG = {
+      apiUrl: '/apps/ext/wishlist',
+      shop: {{ shop.permanent_domain | json }},
+      customerId: {{ customer.id | json }},
+      initialWishlist: {{ wishlist_json | default: '[]' }}
+    };
+
+    let currentWishlist = new Set(CONFIG.initialWishlist);
+
+    const elements = {
+      fab: document.getElementById('wishlist-floating-btn'),
+      drawer: document.getElementById('wishlist-drawer'),
+      overlay: document.getElementById('wishlist-drawer-overlay'),
+      closeBtn: document.getElementById('wishlist-drawer-close'),
+      badge: document.getElementById('wishlist-count-badge'),
+      body: document.getElementById('wishlist-drawer-body')
+    };
+
+    function updateBadge() {
+      const count = currentWishlist.size;
+      if (elements.badge) {
+        elements.badge.textContent = count;
+        elements.badge.classList.toggle('hidden', count === 0);
+      }
+    }
+
+    async function refreshDrawer() {
+      if (!elements.body) return;
+      
+      // Optional: Add a subtle loading state
+      const skeleton = elements.body.querySelector('.wishlist-drawer-grid');
+      if (skeleton) skeleton.style.opacity = '0.5';
+
+      try {
+        // Fetch the current page in background to get updated Liquid-rendered metafields
+        const res = await fetch(window.location.href);
+        if (!res.ok) return;
+        
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newBody = doc.getElementById('wishlist-drawer-body');
+        
+        if (newBody && elements.body) {
+          elements.body.innerHTML = newBody.innerHTML;
+          
+          // Re-update the local set based on the new HTML to stay in sync
+          const items = elements.body.querySelectorAll('.wishlist-drawer-item');
+          currentWishlist.clear();
+          items.forEach(item => {
+            const gid = item.querySelector('.wishlist-drawer-remove')?.dataset.productGid;
+            if (gid) currentWishlist.add(gid);
+          });
+          updateBadge();
+        }
+      } catch (err) {
+        console.error('[Wishlist Side-Fetch Error]', err);
+      } finally {
+        if (elements.body) elements.body.style.opacity = '1';
+      }
+    }
+
+    function toggleDrawer() {
+      const isActive = elements.drawer.classList.toggle('is-active');
+      elements.overlay.classList.toggle('is-active', isActive);
+      
+      if (isActive) {
+        refreshDrawer();
+      }
+    }
+
+    // --- Removal Logic in Drawer ---
+    async function removeItem(productGid) {
+      const productId = productGid.replace('gid://shopify/ProductVariant/', '');
+      const itemEl = document.getElementById(`drawer-item-${productId}`);
+      if (itemEl) itemEl.style.opacity = '0.5';
+
+      try {
+        const res = await fetch(CONFIG.apiUrl + '/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerId: CONFIG.customerId, productId, shop: CONFIG.shop })
+        });
+
+        if (!res.ok) throw new Error('API Fail');
+        
+        currentWishlist.delete(productGid);
+        if (itemEl) {
+          itemEl.style.transform = 'translateX(20px)';
+          itemEl.style.opacity = '0';
+          setTimeout(() => itemEl.remove(), 300);
+        }
+        updateBadge();
+
+        // Sync other heart icons
+        document.dispatchEvent(new CustomEvent('wishlist:sync', {
+          detail: { productId: productGid, isActive: false }
+        }));
+
+      } catch (err) {
+        console.error('[Drawer Remove Error]', err);
+        if (itemEl) itemEl.style.opacity = '1';
+      }
+    }
+
+    elements.fab?.addEventListener('click', toggleDrawer);
+    elements.overlay?.addEventListener('click', toggleDrawer);
+    elements.closeBtn?.addEventListener('click', toggleDrawer);
+
+    // Event delegation for remove buttons in drawer
+    elements.body?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.wishlist-drawer-remove');
+      if (btn) {
+        removeItem(btn.dataset.productGid);
+      }
+    });
+
+    // Listen for global sync events
+    document.addEventListener('wishlist:sync', (e) => {
+      const { productId, isActive } = e.detail;
+      const gid = productId.startsWith('gid://') ? productId : `gid://shopify/ProductVariant/${productId}`;
+      
+      if (isActive) currentWishlist.add(gid);
+      else currentWishlist.delete(gid);
+      
+      updateBadge();
+      
+      // If we're adding AND the drawer is open, we'd need to re-render or inject
+      // For now, simpler to just update badge and local set.
+    });
+
+    // Handle login requirement check (if someone clicks FAB but not logged in)
+    if (!CONFIG.customerId) {
+      elements.fab?.addEventListener('click', (e) => {
+        // Maybe redirect to login or show drawer with login link
+      });
+    }
+
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Global Wishlist Float",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Drawer Title",
+      "default": "My Wishlist"
+    },
+    {
+      "type": "color",
+      "id": "primary_color",
+      "label": "Primary Color (FAB & Badge)",
+      "default": "#ff6b6b"
+    },
+    {
+      "type": "color",
+      "id": "bg_color",
+      "label": "FAB Background Color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "text",
+      "id": "empty_text",
+      "label": "Empty State Text",
+      "default": "Your wishlist is empty."
+    }
+  ]
+}
+{% endschema %}

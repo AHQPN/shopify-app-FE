@@ -2,7 +2,7 @@
 
 client_id = "73b514cf8dc1297f305e160896482857"
 name = "My app"
-application_url = "https://62e09be4235e.ngrok-free.app"
+application_url = "https://7f74-2405-4800-5f18-4000-5b7-c93f-e7fa-8ce2.ngrok-free.app"
 embedded = true
 
 [build]
@@ -31,7 +31,12 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = ["https://62e09be4235e.ngrok-free.app/api/auth/callback"]
+redirect_urls = ["https://7f74-2405-4800-5f18-4000-5b7-c93f-e7fa-8ce2.ngrok-free.app/api/auth/callback"]
 
 [pos]
 embedded = true
+
+[app_proxy]
+url = "https://7f74-2405-4800-5f18-4000-5b7-c93f-e7fa-8ce2.ngrok-free.app/api"
+subpath = "ext"
+prefix = "apps"
